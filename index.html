@@ -8,7 +8,7 @@
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
-  <!-- CSS propio -->
+  <!-- CSS -->
   <link rel="stylesheet" href="css/index.css" />
 </head>
 <body>
@@ -22,7 +22,6 @@
     </div>
 
     <div class="controls">
-      <label class="sr-only" for="selRegion">Región</label>
       <select id="selRegion">
         <option value="">Cargando regiones…</option>
       </select>
@@ -33,16 +32,51 @@
   </header>
 
   <main class="main">
-    <div id="map"></div>
+    <section class="sidebar" id="sidebar">
+      <div class="sb-head">
+        <div class="sb-title">Resultado</div>
+        <div class="sb-sub" id="sbSub">Selecciona una región y haz clic en el mapa.</div>
+      </div>
 
-    <!-- Mensajes flotantes -->
-    <div id="toast" class="toast" aria-live="polite"></div>
+      <div class="sb-box">
+        <div class="sb-kv">
+          <div class="k">Región activa</div>
+          <div class="v" id="sbRegion">—</div>
+        </div>
+        <div class="sb-kv">
+          <div class="k">Clic</div>
+          <div class="v" id="sbClick">—</div>
+        </div>
+        <div class="sb-kv">
+          <div class="k">Estado</div>
+          <div class="v" id="sbEstado">—</div>
+        </div>
+      </div>
+
+      <div class="sb-section">
+        <div class="sb-section-title">Polígono tocado</div>
+        <div class="pill" id="sbCategoria">—</div>
+        <div class="attrs" id="sbAttrs">
+          <div class="muted">Aún no hay selección.</div>
+        </div>
+      </div>
+
+      <div class="sb-foot">
+        <button class="btn2" id="btnClear">Limpiar selección</button>
+      </div>
+    </section>
+
+    <section class="mapwrap">
+      <div id="map"></div>
+      <div id="toast" class="toast" aria-live="polite"></div>
+    </section>
   </main>
 
-  <!-- Leaflet JS -->
+  <!-- libs -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
-  <!-- JS propio -->
+  <!-- app -->
   <script src="js/index.js"></script>
 </body>
 </html>
