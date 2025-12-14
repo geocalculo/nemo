@@ -1,10 +1,12 @@
 /************************************************************
- * GeoConserva - index.js
- * - Consulta punto/polígono sobre KML único:
+ * GeoConserva
+ * - Select regiones: SOLO navegación (mover/zoom)
+ * - Consulta SIEMPRE contra KML único:
  *     capas/snaspe_resto_kml.kml
- * - El polígono NO se muestra en mapa (consulta interna).
+ * - Polígono NO se dibuja (consulta interna)
  ************************************************************/
 
+const REGIONES_URL = "data/regiones.json";
 const KML_URL = "capas/snaspe_resto_kml.kml";
 
 // Vista inicial
@@ -37,8 +39,8 @@ function escapeHtml(s){
     .replaceAll("'","&#039;");
 }
 
-function setPanel({ clickText="—", estado="—", categoria="SNASPE", attrsHtml=null, sub="—" }){
-  document.getElementById("sbRegion").textContent = "SNASPE (KML)";
+function setPanel({ nav="—", clickText="—", estado="—", categoria="SNASPE", attrsHtml=null, sub="—" }){
+  document.getElementById("sbNav").textContent = nav;
   document.getElementById("sbClick").textContent = clickText;
   document.getElementById("sbEstado").textContent = estado;
   document.getElementById("sbCategoria").textContent = categoria;
@@ -53,7 +55,6 @@ function attrsToHtml(props){
   const keys = Object.keys(props || {});
   if (!keys.length) return `<div class="muted">Sin atributos en properties.</div>`;
 
-  // KML suele usar "name", y ExtendedData a veces queda como claves varias
   const preferred = ["name","Name","nombre","NOMBRE","tipo","TIPO","categoria","CATEGORIA","admin","ADMIN","decreto","DECRETO","region","REGION","comuna","COMUNA"];
   const ordered = [];
 
@@ -92,14 +93,63 @@ function crearMapa(){
   map.on("click", onMapClick);
 }
 
-/* ---------- KML load ---------- */
+/* ---------- Regiones (solo navegación) ---------- */
+
+async function cargarRegiones(){
+  const sel = document.getElementById("selRegion");
+  sel.innerHTML = `<option value="">Selecciona región…</option>`;
+
+  let data;
+  try{
+    const res = await fetch(REGIONES_URL, { cache:"no-store" });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  }catch(err){
+    console.error(err);
+    sel.innerHTML = `<option value="">(No se pudo cargar regiones.json)</option>`;
+    toast("⚠️ No pude cargar data/regiones.json", 2800);
+    return [];
+  }
+
+  const regiones = Array.isArray(data) ? data : (data.regiones || []);
+  regiones.sort((a,b) => String(a.codigo_ine||a.id||"").localeCompare(String(b.codigo_ine||b.id||"")));
+
+  for(const r of regiones){
+    const nombre = r.nombre ?? `Región ${r.codigo_ine ?? ""}`;
+    const opt = document.createElement("option");
+    opt.value = String(r.codigo_ine ?? r.id ?? nombre);
+    opt.textContent = nombre;
+    opt.dataset.center = JSON.stringify(r.centro || r.center || null);
+    opt.dataset.zoom = String(r.zoom ?? 7);
+    sel.appendChild(opt);
+  }
+
+  sel.addEventListener("change", () => {
+    const opt = sel.options[sel.selectedIndex];
+    if(!opt || !opt.dataset.center) return;
+
+    let center = null;
+    try{ center = JSON.parse(opt.dataset.center); }catch(_){}
+    const zoom = parseInt(opt.dataset.zoom || "7", 10);
+
+    if(Array.isArray(center) && center.length === 2){
+      map.setView(center, zoom, { animate:true });
+      setPanel({ nav: opt.textContent }); // solo navegación
+      toast(`🧭 ${opt.textContent}`, 1400);
+    }
+  });
+
+  return regiones;
+}
+
+/* ---------- KML load (consulta) ---------- */
 
 async function loadKMLOnce(){
   if (kmlLoaded) return;
 
   setPanel({
     estado: "Cargando…",
-    sub: `Cargando polígonos desde ${KML_URL}`,
+    sub: `Cargando SNASPE desde ${KML_URL}`,
     attrsHtml: `<div class="muted">Cargando KML…</div>`
   });
 
@@ -110,9 +160,9 @@ async function loadKMLOnce(){
   const parser = new DOMParser();
   const kmlDom = parser.parseFromString(kmlText, "text/xml");
 
-  const toGeo = window.toGeoJSON; // UMD expone window.toGeoJSON
+  const toGeo = window.toGeoJSON;
   if (!toGeo || typeof toGeo.kml !== "function"){
-    throw new Error("toGeoJSON.kml no disponible (revisa togeojson.umd.js en index.html)");
+    throw new Error("toGeoJSON.kml no disponible (revisa togeojson en index.html)");
   }
 
   const gj = toGeo.kml(kmlDom);
@@ -122,13 +172,13 @@ async function loadKMLOnce(){
   for (const f of feats){
     const t = f?.geometry?.type;
     if (t === "Polygon" || t === "MultiPolygon"){
-      const bb = turf.bbox(f); // [minLon,minLat,maxLon,maxLat]
+      const bb = turf.bbox(f);
       featuresIndex.push({ feature: f, bbox: bb });
     }
   }
 
   kmlLoaded = true;
-  toast(`✅ KML cargado: ${featuresIndex.length} polígonos`, 2000);
+  toast(`✅ SNASPE cargado: ${featuresIndex.length} polígonos`, 2000);
 
   setPanel({
     estado: "Listo",
@@ -137,20 +187,25 @@ async function loadKMLOnce(){
   });
 }
 
-/* ---------- Click logic ---------- */
+/* ---------- Click logic (consulta) ---------- */
 
 async function onMapClick(e){
   const lat = e.latlng.lat;
   const lng = e.latlng.lng;
 
-  // Marker del clic (solo punto)
+  // marker del clic (solo punto)
   if (clickMarker) map.removeLayer(clickMarker);
   clickMarker = L.circleMarker([lat,lng], { radius:7, weight:2, opacity:1, fillOpacity:0.2 }).addTo(map);
 
+  // navegación actual (solo informativa)
+  const sel = document.getElementById("selRegion");
+  const navName = (sel && sel.value) ? sel.options[sel.selectedIndex].textContent : "—";
+
   setPanel({
+    nav: navName,
     clickText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
     estado: "Consultando…",
-    sub: "Consulta punto/polígono en KML (capa invisible).",
+    sub: "Consulta punto/polígono sobre SNASPE (KML).",
     attrsHtml: `<div class="muted">Buscando polígono que contenga el punto…</div>`
   });
 
@@ -160,6 +215,7 @@ async function onMapClick(e){
     console.error(err);
     toast("⚠️ Error cargando KML", 2400);
     setPanel({
+      nav: navName,
       clickText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
       estado: "Error de datos",
       sub: "No se pudo cargar/parsear el KML. Revisa consola.",
@@ -168,13 +224,12 @@ async function onMapClick(e){
     return;
   }
 
-  // Prefiltro por BBOX
+  // Prefiltro bbox
   const candidates = [];
   for (const it of featuresIndex){
     if (bboxContainsPoint(it.bbox, lng, lat)) candidates.push(it.feature);
   }
 
-  // Point in polygon
   const pt = turf.point([lng, lat]);
   let hit = null;
 
@@ -184,9 +239,7 @@ async function onMapClick(e){
         hit = f;
         break;
       }
-    }catch(_){
-      // ignora geometrías puntualmente inválidas
-    }
+    }catch(_){}
   }
 
   if (hit){
@@ -196,6 +249,7 @@ async function onMapClick(e){
     toast("✅ DENTRO (SNASPE)", 1600);
 
     setPanel({
+      nav: navName,
       clickText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
       estado: "DENTRO",
       categoria: "SNASPE",
@@ -212,6 +266,7 @@ async function onMapClick(e){
     toast("❌ FUERA (SNASPE)", 1800);
 
     setPanel({
+      nav: navName,
       clickText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
       estado: "FUERA",
       categoria: "SNASPE",
@@ -225,8 +280,68 @@ async function onMapClick(e){
 
 function clearSelection(){
   if (clickMarker){ map.removeLayer(clickMarker); clickMarker=null; }
+
+  const sel = document.getElementById("selRegion");
+  const navName = (sel && sel.value) ? sel.options[sel.selectedIndex].textContent : "—";
+
   setPanel({
+    nav: navName,
     clickText:"—",
     estado: kmlLoaded ? "Listo" : "—",
     categoria:"SNASPE",
-    sub: "Haz clic en el mapa para consultar
+    sub: "Haz clic en el mapa para consultar pertenencia (punto/polígono).",
+    attrsHtml: `<div class="muted">Aún no hay selección.</div>`
+  });
+}
+
+function bindUI(){
+  document.getElementById("btnHome").addEventListener("click", () => {
+    map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate:true });
+    toast("🏠 Vista inicial", 1200);
+  });
+
+  document.getElementById("btnGPS").addEventListener("click", () => {
+    if(!navigator.geolocation){
+      toast("⚠️ Tu navegador no soporta geolocalización", 2400);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        if(userMarker) map.removeLayer(userMarker);
+        userMarker = L.circleMarker([lat, lng], { radius:7, weight:2, opacity:1, fillOpacity:0.35 }).addTo(map);
+
+        map.setView([lat, lng], Math.max(map.getZoom(), 14), { animate:true });
+        toast("🎯 Ubicación detectada", 1400);
+      },
+      () => toast("⚠️ No pude obtener tu ubicación (permiso/precisión)", 2600),
+      { enableHighAccuracy:true, timeout:10000, maximumAge:0 }
+    );
+  });
+
+  document.getElementById("btnClear").addEventListener("click", () => {
+    clearSelection();
+    toast("🧹 Selección limpiada", 1200);
+  });
+
+  document.getElementById("btnPreload").addEventListener("click", async () => {
+    try{
+      await loadKMLOnce();
+    }catch(err){
+      console.error(err);
+      toast("⚠️ Error precargando KML", 2200);
+    }
+  });
+}
+
+/* ---------- Init ---------- */
+
+(async function init(){
+  crearMapa();
+  bindUI();
+  await cargarRegiones();    // ✅ SOLO navegación
+  clearSelection();
+  toast("Listo ✅ Selecciona una región para navegar y haz clic para consultar SNASPE.", 2600);
+})();
