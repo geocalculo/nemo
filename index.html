@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GeoConserva - Visor nacional</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+  <!-- CSS propio -->
+  <link rel="stylesheet" href="css/index.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">🌿</div>
+      <div class="title">
+        <h1>GeoConserva</h1>
+        <span>Áreas protegidas y sitios de conservación</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <label class="sr-only" for="selRegion">Región</label>
+      <select id="selRegion">
+        <option value="">Cargando regiones…</option>
+      </select>
+
+      <button id="btnHome" class="btn" title="Vista inicial">🏠</button>
+      <button id="btnGPS" class="btn" title="Ir a mi ubicación">🎯</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <div id="map"></div>
+
+    <!-- Mensajes flotantes -->
+    <div id="toast" class="toast" aria-live="polite"></div>
+  </main>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- JS propio -->
+  <script src="js/index.js"></script>
+</body>
+</html>
