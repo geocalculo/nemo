@@ -1,7 +1,6 @@
 :root{
   --bg:#0b1220;
   --panel:#101a2e;
-  --panel2:#0f1a33;
   --text:#e8eefc;
   --muted:#a8b3cf;
   --stroke:rgba(255,255,255,.12);
@@ -149,10 +148,3 @@ select{
   z-index:1200;
 }
 .toast.show{ display:block; }
-
-/* Mobile: sidebar colapsa abajo */
-@media (max-width: 900px){
-  .main{ grid-template-columns: 1fr; grid-template-rows: 280px 1fr; }
-  .sidebar{ border-right:none; border-bottom:1px solid var(--stroke); }
-  #map{ height:calc(100vh - 64px - 280px); }
-}
