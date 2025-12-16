@@ -1,10 +1,11 @@
 /************************************************************
- * GeoConserva - index.js (GeoJSON UTM 19S)
+ * GeoConserva - index.js (GeoJSON UTM 19S + Distancia + Rumbo)
  * - Basemap: OSM normal (tile.openstreetmap.org) como GeoIPT
  *   + fallback automático a OSM HOT (sigue siendo OSM)
  * - GeoJSON en EPSG:32719 (UTM 19S): capas/nuevo_2.geojson
  * - Click Leaflet (EPSG:4326) -> reproyecta a UTM 19S con proj4
  * - Consulta punto/polígono con Turf (mismo CRS)
+ * - Calcula distancia mínima al perímetro + rumbo hacia el punto más cercano
  * - NO dibuja polígonos (solo punto clickeado)
  * - Regiones.json solo navegación/zoom
  ************************************************************/
@@ -89,17 +90,24 @@ function bboxContainsXY(bb, x, y) {
   return x >= bb[0] && x <= bb[2] && y >= bb[1] && y <= bb[3];
 }
 
-// ===========================
-// Distancias geométricas (UTM)
-// ===========================
+function fmtMeters(m) {
+  if (!isFinite(m)) return "—";
+  return m < 1000 ? `${m.toFixed(1)} m` : `${(m / 1000).toFixed(2)} km`;
+}
 
-// distancia punto-segmento
-function pointToSegmentDistance(x, y, x1, y1, x2, y2) {
+/* ===========================
+   Distancias geométricas (UTM)
+   + rumbo hacia el punto más cercano del perímetro
+=========================== */
+
+function pointToSegmentDistanceWithPoint(x, y, x1, y1, x2, y2) {
   const dx = x2 - x1;
   const dy = y2 - y1;
 
+  // segmento degenerado
   if (dx === 0 && dy === 0) {
-    return Math.hypot(x - x1, y - y1);
+    const d = Math.hypot(x - x1, y - y1);
+    return { d, cx: x1, cy: y1 };
   }
 
   const t = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy);
@@ -108,48 +116,54 @@ function pointToSegmentDistance(x, y, x1, y1, x2, y2) {
   const cx = x1 + tt * dx;
   const cy = y1 + tt * dy;
 
-  return Math.hypot(x - cx, y - cy);
+  const d = Math.hypot(x - cx, y - cy);
+  return { d, cx, cy };
 }
 
-// distancia mínima a un anillo
 function minDistanceToRing(x, y, ring) {
-  let dmin = Infinity;
+  let best = { d: Infinity, cx: null, cy: null };
+
   for (let i = 0; i < ring.length - 1; i++) {
     const [x1, y1] = ring[i];
     const [x2, y2] = ring[i + 1];
-    const d = pointToSegmentDistance(x, y, x1, y1, x2, y2);
-    if (d < dmin) dmin = d;
+
+    const r = pointToSegmentDistanceWithPoint(x, y, x1, y1, x2, y2);
+    if (r.d < best.d) best = r;
   }
-  return dmin;
+  return best; // { d, cx, cy }
 }
 
-// distancia mínima al perímetro (Polygon / MultiPolygon)
 function distanceToPerimeterUTM(feature, x, y) {
   const g = feature.geometry;
-  let dmin = Infinity;
+  let best = { d: Infinity, cx: null, cy: null };
 
   if (g.type === "Polygon") {
     g.coordinates.forEach(ring => {
-      dmin = Math.min(dmin, minDistanceToRing(x, y, ring));
+      const r = minDistanceToRing(x, y, ring);
+      if (r.d < best.d) best = r;
     });
   }
 
   if (g.type === "MultiPolygon") {
     g.coordinates.forEach(poly => {
       poly.forEach(ring => {
-        dmin = Math.min(dmin, minDistanceToRing(x, y, ring));
+        const r = minDistanceToRing(x, y, ring);
+        if (r.d < best.d) best = r;
       });
     });
   }
 
-  return dmin;
+  return best; // { d, cx, cy }
 }
 
-function fmtMeters(m) {
-  if (!isFinite(m)) return "—";
-  return m < 1000 ? `${m.toFixed(1)} m` : `${(m / 1000).toFixed(2)} km`;
+// Rumbo azimutal desde el Norte (0°) sentido horario: 90° Este, 180° Sur, 270° Oeste
+function rumboDesdeNorte(x1, y1, x2, y2) {
+  const dE = x2 - x1; // Este
+  const dN = y2 - y1; // Norte
+  let ang = Math.atan2(dE, dN) * 180 / Math.PI; // ojo: (E, N)
+  if (ang < 0) ang += 360;
+  return ang;
 }
-
 
 /* ===========================
    Map init (OSM normal + fallback)
@@ -304,6 +318,7 @@ async function loadGeoJSON() {
 
 /* ===========================
    Click consulta (WGS84 -> UTM19S)
+   + distancia y rumbo
 =========================== */
 
 async function onMapClick(e) {
@@ -312,10 +327,7 @@ async function onMapClick(e) {
 
   if (clickMarker) map.removeLayer(clickMarker);
   clickMarker = L.circleMarker([lat, lng], {
-    radius: 7,
-    weight: 2,
-    opacity: 1,
-    fillOpacity: 0.25
+    radius: 7, weight: 2, opacity: 1, fillOpacity: 0.25
   }).addTo(map);
 
   const sel = document.getElementById("selRegion");
@@ -325,7 +337,7 @@ async function onMapClick(e) {
     nav: navName,
     click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
     estado: "Consultando…",
-    sub: "Evaluando pertenencia y distancia al perímetro…",
+    sub: "Reproyectando clic a UTM 19S y calculando distancia + rumbo…",
     attrs: `<div class="muted">Procesando…</div>`
   });
 
@@ -333,42 +345,52 @@ async function onMapClick(e) {
     await loadGeoJSON();
   } catch (err) {
     console.error(err);
-    toast("⚠️ Error cargando GeoJSON", 2600);
+    toast("⚠️ Error cargando GeoJSON (ver consola)", 2600);
+    setPanel({
+      nav: navName,
+      click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+      estado: "Error",
+      sub: "No se pudo cargar el GeoJSON.",
+      attrs: `<div class="muted">Revisa consola.</div>`
+    });
     return;
   }
 
-  // reproyección WGS84 → UTM 19S
+  // ✅ WGS84 -> UTM19S
   const [x, y] = proj4(CRS_WGS84, CRS_UTM19S, [lng, lat]);
+
   const pt = turf.point([x, y]);
 
-  // ===========================
-  // 1) ¿DENTRO de algún polígono?
-  // ===========================
+  // 1) Buscar si cae dentro
   for (const it of featuresIndex) {
     if (!bboxContainsXY(it.bbox, x, y)) continue;
 
-    if (turf.booleanPointInPolygon(pt, it.feature)) {
-      const d = distanceToPerimeterUTM(it.feature, x, y);
+    let inside = false;
+    try { inside = turf.booleanPointInPolygon(pt, it.feature); } catch (_) {}
 
-      toast(`✅ DENTRO · salida en ${fmtMeters(d)}`, 1800);
+    if (inside) {
+      // DENTRO: distancia mínima al perímetro para salir + rumbo hacia el perímetro
+      const r = distanceToPerimeterUTM(it.feature, x, y);
+      const rumbo = rumboDesdeNorte(x, y, r.cx, r.cy);
+
+      toast(`✅ DENTRO · salida ${fmtMeters(r.d)} · ${rumbo.toFixed(1)}°`, 2200);
+
       setPanel({
         nav: navName,
         click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
         estado: "DENTRO",
-        sub: `Distancia mínima al perímetro (para salir): ${fmtMeters(d)}`,
+        sub: `Para salir: ${fmtMeters(r.d)} · Rumbo: ${rumbo.toFixed(1)}° (N=0°, S=180°)`,
         attrs: attrsToHtml(it.feature.properties || {})
       });
       return;
     }
   }
 
-  // ===========================
-  // 2) FUERA → polígono más cercano
-  // ===========================
-  let best = { d: Infinity, feature: null };
+  // 2) FUERA: polígono más cercano por distancia al perímetro
+  let best = { d: Infinity, cx: null, cy: null, feature: null };
 
   for (const it of featuresIndex) {
-    // optimización: bbox expandida
+    // optimización: bbox expandida (cuando ya existe candidato)
     if (isFinite(best.d)) {
       const bb = it.bbox;
       const pad = best.d;
@@ -378,22 +400,33 @@ async function onMapClick(e) {
       ) continue;
     }
 
-    const d = distanceToPerimeterUTM(it.feature, x, y);
-    if (d < best.d) best = { d, feature: it.feature };
+    const r = distanceToPerimeterUTM(it.feature, x, y);
+    if (r.d < best.d) best = { ...r, feature: it.feature };
   }
 
   if (best.feature) {
-    toast(`❌ FUERA · más cercano a ${fmtMeters(best.d)}`, 2200);
+    const rumbo = rumboDesdeNorte(x, y, best.cx, best.cy);
+
+    toast(`❌ FUERA · ${fmtMeters(best.d)} · ${rumbo.toFixed(1)}°`, 2400);
+
     setPanel({
       nav: navName,
       click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
       estado: "FUERA",
-      sub: `Distancia mínima al área protegida más cercana: ${fmtMeters(best.d)}`,
+      sub: `Más cercano: ${fmtMeters(best.d)} · Rumbo: ${rumbo.toFixed(1)}° (N=0°, S=180°)`,
       attrs: attrsToHtml(best.feature.properties || {})
+    });
+  } else {
+    toast("❌ FUERA · sin polígonos válidos", 2200);
+    setPanel({
+      nav: navName,
+      click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+      estado: "FUERA",
+      sub: "No se encontraron polígonos válidos para calcular distancia.",
+      attrs: `<div class="muted">Sin datos válidos.</div>`
     });
   }
 }
-
 
 /* ===========================
    Botones
@@ -473,7 +506,7 @@ function bindUI() {
         toast("⚠️ Error precargando GeoJSON (ver consola)", 2400);
       }
     });
-  }F
+  }
 }
 
 /* ===========================
