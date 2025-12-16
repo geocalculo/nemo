@@ -8,8 +8,16 @@
 }
 
 *{ box-sizing:border-box; }
-html,body{ height:100%; margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif; background:var(--bg); color:var(--text); }
 
+html, body{
+  height:100%;
+  margin:0;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;
+  background:var(--bg);
+  color:var(--text);
+}
+
+/* ===== Topbar fija ===== */
 .topbar{
   position:fixed;
   top:0; left:0; right:0;
@@ -59,13 +67,18 @@ select{
 }
 .btn:hover{ background:rgba(255,255,255,.07); }
 
+/* ===== Layout principal =====
+   Clave: usar height: calc(100vh - 64px) para que el grid tenga altura real.
+*/
 .main{
-  height:100%;
-  padding-top:64px;
+  margin-top:64px;                 /* deja espacio para el header fijo */
+  height: calc(100vh - 64px);      /* ✅ altura REAL del contenedor */
   display:grid;
   grid-template-columns: 360px 1fr;
+  overflow:hidden;
 }
 
+/* Panel izquierdo */
 .sidebar{
   border-right:1px solid var(--stroke);
   background:linear-gradient(180deg, rgba(16,26,46,.92), rgba(12,19,33,.92));
@@ -73,9 +86,23 @@ select{
   overflow:auto;
 }
 
-.mapwrap{ position:relative; min-width:0; }
-#map{ height:calc(100vh - 64px); width:100%; }
+/* Contenedor del mapa */
+.mapwrap{
+  position:relative;
+  min-width:0;
+  height: 100%;                    /* ✅ ocupa todo el alto del grid */
+  overflow:hidden;
+}
 
+/* Leaflet requiere altura 100% real */
+#map{
+  width:100%;
+  height:100%;
+  background:#dbe7ff;              /* ayuda visual si algo queda vacío */
+  z-index:1;
+}
+
+/* Panel info */
 .sb-head{ padding:8px 6px 12px 6px; }
 .sb-title{ font-size:16px; font-weight:700; }
 .sb-sub{ font-size:12px; color:var(--muted); margin-top:4px; }
@@ -89,12 +116,24 @@ select{
   margin-bottom:12px;
 }
 
-.sb-kv{ display:flex; justify-content:space-between; gap:10px; padding:6px 2px; border-bottom:1px dashed rgba(255,255,255,.10); }
+.sb-kv{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  padding:6px 2px;
+  border-bottom:1px dashed rgba(255,255,255,.10);
+}
 .sb-kv:last-child{ border-bottom:none; }
 .k{ color:var(--muted); font-size:12px; }
 .v{ font-size:12px; text-align:right; }
 
-.sb-section{ border:1px solid var(--stroke); border-radius:16px; background:rgba(255,255,255,.02); padding:10px; }
+.sb-section{
+  border:1px solid var(--stroke);
+  border-radius:16px;
+  background:rgba(255,255,255,.02);
+  padding:10px;
+}
+
 .sb-section-title{ font-size:13px; font-weight:700; margin-bottom:8px; }
 
 .pill{
@@ -132,6 +171,7 @@ select{
 }
 .btn2:hover{ background:rgba(255,255,255,.07); }
 
+/* Toast sobre mapa */
 .toast{
   position:absolute;
   left:12px;
@@ -145,6 +185,6 @@ select{
   color:var(--text);
   font-size:13px;
   display:none;
-  z-index:1200;
+  z-index:5;
 }
 .toast.show{ display:block; }
