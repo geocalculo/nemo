@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GeoNEMO - MapaOut</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="css/mapaout.css" />
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <div class="logo">🧾</div>
+      <div class="title">
+        <h1>GeoNEMO · MapaOut</h1>
+        <div class="sub">Polígono vinculado por capa (inside o proximidad) + punto consultado</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnBack" class="btn" title="Volver al mapa">← Volver</button>
+      <button id="btnDownloadJson" class="btn" title="Descargar JSON del resultado">⬇ JSON</button>
+      <button id="btnClearOut" class="btn" title="Borrar resultado guardado">🗑</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="row">
+      <div class="mapcard">
+        <div class="maptitle">Mapa de salida</div>
+        <div id="outMap" class="outmap" aria-label="MapaOut"></div>
+      </div>
+
+      <div class="card">
+        <h2>Resumen</h2>
+        <div class="grid">
+          <div class="kv"><div class="k">Actualizado</div><div class="v" id="outUpdated">—</div></div>
+          <div class="kv"><div class="k">Clic</div><div class="v" id="outClick">—</div></div>
+          <div class="kv"><div class="k">BBOX</div><div class="v mono" id="outBbox">—</div></div>
+          <div class="kv"><div class="k">Áreas en BBOX</div><div class="v" id="st1">—</div></div>
+          <div class="kv"><div class="k">Total en BBOX</div><div class="v" id="st2">—</div></div>
+          <div class="kv"><div class="k">Sup. protegida</div><div class="v" id="st3">—</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Vinculación por capas</h2>
+      <div id="links" class="links"></div>
+    </section>
+
+    <section class="card">
+      <h2>Atributos del polígono seleccionado (capa activa)</h2>
+      <div class="muted" style="margin:-4px 0 10px 0;">Haz clic en una capa en la tabla anterior para ver sus atributos.</div>
+      <div id="attrs" class="attrs">
+        <div class="muted">Sin selección.</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="js/mapaout.js"></script>
+</body>
+</html>

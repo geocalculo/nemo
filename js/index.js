@@ -1,24 +1,32 @@
 /************************************************************
- * GeoConserva - index.js (WGS84 grados + Resumen BBOX)
- * - Basemap: OSM normal + fallback HOT
- * - GeoJSON WGS84: capas/SNASPE_Monumento_Natural.geojson
- * - Resumen dinámico al pan/zoom:
- *   1) N° áreas protegidas en bbox
- *   2) Total áreas en bbox
- *   3) Superficie protegida dentro del bbox (ha / km²)
- * - Click opcional: marcador y mensaje rápido
+ * GeoNEMO - index.js (WGS84 + Vinculación por capa)
+ * - Basemap: OpenTopoMap 100% + Satélite (Esri) 25% encima
+ * - Capas (config): cada capa devuelve 1 polígono vinculado al punto:
+ *    a) Si el punto está dentro -> vinculación por "inside"
+ *    b) Si no está dentro -> vinculación por proximidad al perímetro
+ * - Click: guarda resultado completo y abre MapaOut.html siempre
  ************************************************************/
 
 const REGIONES_URL = "data/regiones.json";
-const GEOJSON_URL  = "capas/SNASPE_Monumento_Natural.geojson";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
+
+// ✅ Configura aquí tus capas (puedes sumar más)
+const LAYERS = [
+  {
+    id: "snaspe_mn",
+    name: "SNASPE · Monumento Natural",
+    url: "capas/SNASPE_Monumento_Natural.geojson",
+  }
+];
+
+const OUT_STORAGE_KEY = "geonemo_out_v2";
 
 let map;
 let userMarker = null;
 let clickMarker = null;
 
-let dataLoaded = false;
-let featuresIndex = []; // [{ feature, bbox:[minLon,minLat,maxLon,maxLat], areaM2? }]
+// Índices por capa: layerId -> { loaded, featuresIndex[] }
+const layerState = new Map();
 
 /* ===========================
    UI helpers
@@ -53,51 +61,62 @@ function bboxContainsLonLat(bb, lon, lat) {
   return lon >= bb[0] && lon <= bb[2] && lat >= bb[1] && lat <= bb[3];
 }
 
+function nowIso(){ return new Date().toISOString(); }
+
 /* ===========================
-   Map init (OSM normal + fallback)
+   localStorage out
+=========================== */
+function saveOut(payload){
+  try{ localStorage.setItem(OUT_STORAGE_KEY, JSON.stringify(payload)); }
+  catch(e){ console.warn("No pude guardar salida", e); }
+}
+function loadOut(){
+  try{
+    const raw = localStorage.getItem(OUT_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch(e){ return null; }
+}
+function openOut(){
+  window.open("mapaout.html", "_blank", "noopener");
+}
+
+/* ===========================
+   Map init
 =========================== */
 function crearMapa() {
   map = L.map("map", { zoomControl: true, preferCanvas: true })
     .setView(HOME_VIEW.center, HOME_VIEW.zoom);
 
-  const osmNormal = L.tileLayer(
-    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  // Base GeoNEMO: Topo 100% + Satélite 25%
+  const topoBase = L.tileLayer(
+    "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
     {
-      maxZoom: 19,
+      maxZoom: 17,
       subdomains: "abc",
-      attribution: "&copy; OpenStreetMap contributors",
+      opacity: 1.0,
+      attribution: "Map data: &copy; OpenStreetMap contributors, SRTM | OpenTopoMap",
       crossOrigin: true,
       updateWhenIdle: true
     }
   );
 
-  const osmHOT = L.tileLayer(
-    "https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+  const satOverlay = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
       maxZoom: 19,
-      subdomains: "abc",
-      attribution: "&copy; OpenStreetMap contributors, HOT",
+      opacity: 0.25,
+      attribution: "Tiles &copy; Esri",
       crossOrigin: true,
       updateWhenIdle: true
     }
   );
 
-  osmNormal.addTo(map);
+  topoBase.addTo(map);
+  satOverlay.addTo(map);
 
-  let switched = false;
-  osmNormal.on("tileerror", () => {
-    if (switched) return;
-    switched = true;
-    try { map.removeLayer(osmNormal); } catch(_) {}
-    osmHOT.addTo(map);
-    toast("⚠️ OSM normal falló. Cambié a OSM HOT.", 2600);
-  });
-
-  // Actualización dinámica por BBOX
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
-
-  // Click opcional (no es necesario para el resumen, pero útil)
   map.on("click", onMapClick);
 
   setTimeout(() => map.invalidateSize(true), 250);
@@ -150,50 +169,42 @@ async function cargarRegiones() {
 }
 
 /* ===========================
-   GeoJSON load (WGS84 grados)
+   Load GeoJSON por capa
 =========================== */
-async function loadGeoJSON() {
-  if (dataLoaded) return;
+async function ensureLayerLoaded(layer){
+  const st = layerState.get(layer.id) || { loaded:false, featuresIndex:[] };
+  if (st.loaded) return st;
 
-  // UI inicial (barra)
-  setStatsUI("…", "…", "Cargando…");
-
-  const res = await fetch(GEOJSON_URL, { cache: "no-store" });
-  if (!res.ok) throw new Error(`No se pudo cargar ${GEOJSON_URL} (HTTP ${res.status})`);
+  const res = await fetch(layer.url, { cache:"no-store" });
+  if (!res.ok) throw new Error(`No se pudo cargar ${layer.url} (HTTP ${res.status})`);
 
   const gj = await res.json();
   const feats = gj.features || [];
 
-  featuresIndex = [];
-  for (const f of feats) {
+  const idx = [];
+  for (const f of feats){
     const t = f?.geometry?.type;
-    if (t === "Polygon" || t === "MultiPolygon") {
-      try {
-        const bb = turf.bbox(f); // [minLon,minLat,maxLon,maxLat]
-        // (opcional) precalcula área total para modo rápido
+    if (t === "Polygon" || t === "MultiPolygon"){
+      try{
+        const bb = turf.bbox(f);
         let areaM2 = NaN;
-        try { areaM2 = turf.area(f); } catch(_) {}
-        featuresIndex.push({ feature: f, bbox: bb, areaM2 });
-      } catch (_) {}
+        try{ areaM2 = turf.area(f); } catch(_) {}
+        idx.push({ feature:f, bbox:bb, areaM2 });
+      } catch(_){}
     }
   }
 
-  if (!featuresIndex.length) {
-    throw new Error("GeoJSON sin polígonos válidos (Polygon/MultiPolygon).");
-  }
+  st.loaded = true;
+  st.featuresIndex = idx;
+  layerState.set(layer.id, st);
 
-  dataLoaded = true;
-  toast(`✅ Cargado: ${featuresIndex.length} polígonos`, 2000);
-
-  // Primer cálculo
-  scheduleStatsUpdate();
+  toast(`✅ Cargada: ${layer.name} (${idx.length})`, 1800);
+  return st;
 }
 
 /* ===========================
-   Stats BBOX (dinámico)
-   - “protegidas” = esta capa (por ahora)
-   - “total” = igual (por ahora)
-   - superficie = área intersección con bbox
+   Resumen BBOX (por ahora solo 1 capa: la primera)
+   Luego puedes cambiar a sumar capas.
 =========================== */
 const elStProtected = document.getElementById("stProtected");
 const elStTotal     = document.getElementById("stTotal");
@@ -216,17 +227,17 @@ function scheduleStatsUpdate(){
 }
 
 async function updateBboxStats(){
-  // si aún no cargó, intenta cargar automáticamente (lazy)
-  if (!dataLoaded) {
-    try { await loadGeoJSON(); } catch (e) {
-      console.error(e);
-      setStatsUI("—", "—", "—");
-      return;
-    }
-  }
+  if (!map) return;
 
-  if (!featuresIndex.length || !map){
-    setStatsUI("—", "—", "—");
+  // Tomamos la primera capa como "resumen" (ajustable)
+  const layer = LAYERS[0];
+  if (!layer) return;
+
+  let st;
+  try{ st = await ensureLayerLoaded(layer); }
+  catch(e){
+    console.error(e);
+    setStatsUI("—","—","—");
     return;
   }
 
@@ -238,7 +249,7 @@ async function updateBboxStats(){
   let protectedAreas = 0;
   let protectedAreaM2 = 0;
 
-  for (const it of featuresIndex){
+  for (const it of st.featuresIndex){
     if (!bboxIntersects(it.bbox, bbox)) continue;
 
     let touches = false;
@@ -248,24 +259,111 @@ async function updateBboxStats(){
     totalAreas += 1;
     protectedAreas += 1;
 
-    // Área dentro del bbox: intersección (más correcto)
-    // Nota: puede ser pesado en datasets grandes. Si se vuelve lento, cambiamos a “modo rápido”.
     try {
       const inter = turf.intersect(it.feature, bboxPoly);
       if (inter) protectedAreaM2 += turf.area(inter);
       else protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
     } catch(_) {
-      // fallback
       protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
     }
   }
 
   setStatsUI(fmtInt(protectedAreas), fmtInt(totalAreas), fmtArea(protectedAreaM2));
+
+  // Guardar estado de bbox/stats (para mapaout)
+  const prev = loadOut() || {};
+  saveOut({
+    ...prev,
+    updated_at: nowIso(),
+    bbox: { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] },
+    stats: {
+      areas_bbox: protectedAreas,
+      total_bbox: totalAreas,
+      protected_area_m2: protectedAreaM2,
+      protected_area_fmt: fmtArea(protectedAreaM2)
+    }
+  });
 }
 
 /* ===========================
-   Click (opcional): marcador y “dentro”
-   - No afecta el resumen
+   Vinculación por capa:
+   - inside => ok
+   - else => nearest perimeter
+=========================== */
+function distToPerimeterKm(feature, pt){
+  // pt: turf.point([lon,lat])
+  // Convierte polígono a línea(s) del perímetro y mide distancia mínima
+  // pointToLineDistance en km por defecto (units: 'kilometers')
+  try{
+    const line = turf.polygonToLine(feature);
+    const d = turf.pointToLineDistance(pt, line, { units:"kilometers" });
+    return isFinite(d) ? d : Infinity;
+  } catch(e){
+    return Infinity;
+  }
+}
+
+async function linkOneLayerToPoint(layer, pt, lon, lat){
+  const st = await ensureLayerLoaded(layer);
+  const idx = st.featuresIndex;
+
+  // 1) Intentar inside con prefiltrado por bbox
+  let insideFeat = null;
+  for (const it of idx){
+    if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
+    let inside = false;
+    try{ inside = turf.booleanPointInPolygon(pt, it.feature); } catch(_) {}
+    if (inside){
+      insideFeat = it.feature;
+      break; // 1 polígono por capa
+    }
+  }
+  if (insideFeat){
+    return {
+      layer_id: layer.id,
+      layer_name: layer.name,
+      link_type: "inside",
+      distance_km: 0,
+      feature: {
+        type: "Feature",
+        properties: insideFeat.properties || {},
+        geometry: insideFeat.geometry
+      }
+    };
+  }
+
+  // 2) Si no está dentro, buscar nearest perimeter (optimizado por bbox expandida)
+  let best = { d: Infinity, feature: null };
+
+  for (const it of idx){
+    // poda por bbox expandida por mejor distancia (grados ~ km: aproximación muy suave)
+    if (isFinite(best.d)){
+      const padDeg = best.d / 111.0; // ~111 km por grado
+      const bb = it.bbox;
+      if (lon < bb[0]-padDeg || lon > bb[2]+padDeg || lat < bb[1]-padDeg || lat > bb[3]+padDeg) continue;
+    }
+
+    const d = distToPerimeterKm(it.feature, pt);
+    if (d < best.d){
+      best = { d, feature: it.feature };
+    }
+  }
+
+  return {
+    layer_id: layer.id,
+    layer_name: layer.name,
+    link_type: best.feature ? "nearest_perimeter" : "none",
+    distance_km: isFinite(best.d) ? best.d : null,
+    feature: best.feature ? {
+      type: "Feature",
+      properties: best.feature.properties || {},
+      geometry: best.feature.geometry
+    } : null
+  };
+}
+
+/* ===========================
+   Click: siempre abre MapaOut.html
 =========================== */
 async function onMapClick(e){
   const lat = e.latlng.lat;
@@ -276,21 +374,42 @@ async function onMapClick(e){
     radius: 7, weight: 2, opacity: 1, fillOpacity: 0.25
   }).addTo(map);
 
-  // carga si falta
-  try { await loadGeoJSON(); } catch(_) {}
-
   const pt = turf.point([lon, lat]);
 
-  // cuenta cuántos polígonos contienen el punto (normalmente 0 o 1)
-  let hits = 0;
-  for (const it of featuresIndex){
-    if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
-    let inside = false;
-    try { inside = turf.booleanPointInPolygon(pt, it.feature); } catch(_) {}
-    if (inside) hits++;
+  // Vincular 1 polígono por capa
+  const links = [];
+  for (const layer of LAYERS){
+    try{
+      const link = await linkOneLayerToPoint(layer, pt, lon, lat);
+      links.push(link);
+    } catch(e2){
+      console.warn("Error vinculando capa", layer, e2);
+      links.push({
+        layer_id: layer.id,
+        layer_name: layer.name,
+        link_type: "error",
+        distance_km: null,
+        feature: null
+      });
+    }
   }
 
-  toast(hits ? `✅ Punto dentro de ${hits} polígono(s)` : "❌ Punto fuera", 1600);
+  // Mensaje breve
+  const insideCount = links.filter(x => x.link_type === "inside").length;
+  toast(insideCount ? `✅ Dentro en ${insideCount} capa(s)` : "📍 Vinculación por proximidad al perímetro", 1800);
+
+  // Guardar salida
+  const prev = loadOut() || {};
+  saveOut({
+    ...prev,
+    created_at: prev.created_at || nowIso(),
+    updated_at: nowIso(),
+    click: { lat, lon },
+    links
+  });
+
+  // Abrir salida SIEMPRE
+  openOut();
 }
 
 /* ===========================
@@ -309,6 +428,7 @@ function bindUI() {
   const btnGPS = document.getElementById("btnGPS");
   const btnClear = document.getElementById("btnClear");
   const btnPreload = document.getElementById("btnPreload");
+  const btnOut = document.getElementById("btnOut");
 
   if (btnHome) {
     btnHome.addEventListener("click", () => {
@@ -317,6 +437,10 @@ function bindUI() {
       setTimeout(() => map.invalidateSize(true), 150);
       scheduleStatsUpdate();
     });
+  }
+
+  if (btnOut) {
+    btnOut.addEventListener("click", () => openOut());
   }
 
   if (btnGPS) {
@@ -346,19 +470,17 @@ function bindUI() {
     });
   }
 
-  if (btnClear) {
-    btnClear.addEventListener("click", clearPoint);
-  }
+  if (btnClear) btnClear.addEventListener("click", clearPoint);
 
   if (btnPreload) {
     btnPreload.addEventListener("click", async () => {
       try {
-        await loadGeoJSON();
-        toast("⬇️ Datos precargados", 1400);
+        for (const layer of LAYERS) await ensureLayerLoaded(layer);
+        toast("⬇️ Capas precargadas", 1400);
         scheduleStatsUpdate();
       } catch (err) {
         console.error(err);
-        toast("⚠️ Error precargando GeoJSON (ver consola)", 2400);
+        toast("⚠️ Error precargando (ver consola)", 2400);
       }
     });
   }
@@ -372,8 +494,8 @@ function bindUI() {
   bindUI();
   await cargarRegiones();
 
-  // precarga “silenciosa” (puedes comentarla si no quieres)
-  loadGeoJSON().catch(err => console.warn(err));
+  // precarga “silenciosa”
+  ensureLayerLoaded(LAYERS[0]).catch(() => {});
 
-  toast("Listo ✅ Pan/Zoom para ver resumen SNASPE en BBOX.", 2400);
+  toast("Listo ✅ Clic para vincular 1 polígono por capa y abrir MapaOut.", 2600);
 })();

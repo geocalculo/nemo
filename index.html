@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GeoConserva - SNASPE</title>
+  <title>GeoNEMO - SNASPE</title>
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="css/index.css" />
@@ -13,8 +13,8 @@
     <div class="brand">
       <div class="logo">🌿</div>
       <div class="title">
-        <h1>GeoConserva</h1>
-        <span>SNASPE · Resumen dinámico en BBOX</span>
+        <h1>GeoNEMO</h1>
+        <span>Consulta por punto · Vinculación por dentro o proximidad · Salida MapaOut</span>
       </div>
     </div>
 
@@ -26,7 +26,7 @@
       <button id="btnHome" class="btn" title="Vista inicial">🏠</button>
       <button id="btnGPS" class="btn" title="Ir a mi ubicación">🎯</button>
 
-      <!-- Opcionales -->
+      <button id="btnOut" class="btn" title="Abrir MapaOut.html">🧾</button>
       <button id="btnPreload" class="btn" title="Precargar GeoJSON">⬇️</button>
       <button id="btnClear" class="btn" title="Limpiar punto">🧹</button>
     </div>
@@ -35,11 +35,11 @@
   <!-- Barra resumen dinámica (BBOX) -->
   <div class="statsbar" aria-live="polite">
     <div class="stat">
-      <div class="k">Áreas protegidas (BBOX)</div>
+      <div class="k">Áreas en BBOX</div>
       <div class="v" id="stProtected">—</div>
     </div>
     <div class="stat">
-      <div class="k">Total áreas (BBOX)</div>
+      <div class="k">Total en BBOX</div>
       <div class="v" id="stTotal">—</div>
     </div>
     <div class="stat">
