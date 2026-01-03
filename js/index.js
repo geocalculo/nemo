@@ -1,34 +1,28 @@
 /************************************************************
- * GeoConserva - index.js (GeoJSON UTM 19S + Distancia + Rumbo)
- * - Basemap: OSM normal (tile.openstreetmap.org) como GeoIPT
- *   + fallback automático a OSM HOT (sigue siendo OSM)
- * - GeoJSON en EPSG:32719 (UTM 19S): capas/nuevo_2.geojson
- * - Click Leaflet (EPSG:4326) -> reproyecta a UTM 19S con proj4
- * - Consulta punto/polígono con Turf (mismo CRS)
- * - Calcula distancia mínima al perímetro + rumbo hacia el punto más cercano
- * - NO dibuja polígonos (solo punto clickeado)
- * - Regiones.json solo navegación/zoom
+ * GeoConserva - index.js (WGS84 grados + Resumen BBOX)
+ * - Basemap: OSM normal + fallback HOT
+ * - GeoJSON WGS84: capas/SNASPE_Monumento_Natural.geojson
+ * - Resumen dinámico al pan/zoom:
+ *   1) N° áreas protegidas en bbox
+ *   2) Total áreas en bbox
+ *   3) Superficie protegida dentro del bbox (ha / km²)
+ * - Click opcional: marcador y mensaje rápido
  ************************************************************/
 
 const REGIONES_URL = "data/regiones.json";
-const GEOJSON_URL  = "capas/nuevo_2.geojson"; // asegúrate del nombre exacto
+const GEOJSON_URL  = "capas/SNASPE_Monumento_Natural.geojson";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
-
-// CRS
-const CRS_WGS84 = "EPSG:4326";
-const CRS_UTM19S = "EPSG:32719";
 
 let map;
 let userMarker = null;
 let clickMarker = null;
 
 let dataLoaded = false;
-let featuresIndex = []; // [{ feature, bbox:[minx,miny,maxx,maxy] }]
+let featuresIndex = []; // [{ feature, bbox:[minLon,minLat,maxLon,maxLat], areaM2? }]
 
 /* ===========================
    UI helpers
 =========================== */
-
 function toast(msg, ms = 2200) {
   const el = document.getElementById("toast");
   if (!el) return;
@@ -38,142 +32,34 @@ function toast(msg, ms = 2200) {
   toast._t = setTimeout(() => el.classList.remove("show"), ms);
 }
 
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+function fmtInt(n){ return (n ?? 0).toLocaleString("es-CL"); }
 
-function setPanel({ nav="—", click="—", estado="—", sub="", attrs=null, categoria="SNASPE" }) {
-  const sbNav = document.getElementById("sbNav");
-  const sbClick = document.getElementById("sbClick");
-  const sbEstado = document.getElementById("sbEstado");
-  const sbSub = document.getElementById("sbSub");
-  const sbAttrs = document.getElementById("sbAttrs");
-  const sbCategoria = document.getElementById("sbCategoria");
-
-  if (sbNav) sbNav.textContent = nav;
-  if (sbClick) sbClick.textContent = click;
-  if (sbEstado) sbEstado.textContent = estado;
-  if (sbSub) sbSub.textContent = sub;
-  if (sbCategoria) sbCategoria.textContent = categoria;
-
-  if (attrs !== null && sbAttrs) sbAttrs.innerHTML = attrs;
-}
-
-function attrsToHtml(props = {}) {
-  const keys = Object.keys(props);
-  if (!keys.length) return `<div class="muted">Sin atributos.</div>`;
-
-  // Orden sugerido (si existe)
-  const preferred = ["NOMBRE", "nombre", "Name", "name", "CATEGORIA", "categoria", "TIPO", "tipo"];
-  const ordered = [];
-  for (const k of preferred) if (k in props) ordered.push(k);
-  for (const k of keys) if (!ordered.includes(k)) ordered.push(k);
-
-  return ordered.map(k => {
-    const v = props[k];
-    const vv = (v === null || v === undefined || v === "") ? "—" : String(v);
-    return `
-      <div class="attr">
-        <div class="ak">${escapeHtml(k)}</div>
-        <div class="av">${escapeHtml(vv)}</div>
-      </div>
-    `;
-  }).join("");
-}
-
-function bboxContainsXY(bb, x, y) {
-  return x >= bb[0] && x <= bb[2] && y >= bb[1] && y <= bb[3];
-}
-
-function fmtMeters(m) {
-  if (!isFinite(m)) return "—";
-  return m < 1000 ? `${m.toFixed(1)} m` : `${(m / 1000).toFixed(2)} km`;
-}
-
-/* ===========================
-   Distancias geométricas (UTM)
-   + rumbo hacia el punto más cercano del perímetro
-=========================== */
-
-function pointToSegmentDistanceWithPoint(x, y, x1, y1, x2, y2) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-
-  // segmento degenerado
-  if (dx === 0 && dy === 0) {
-    const d = Math.hypot(x - x1, y - y1);
-    return { d, cx: x1, cy: y1 };
+function fmtArea(m2){
+  if (!isFinite(m2)) return "—";
+  const ha = m2 / 10000;
+  if (ha >= 1000){
+    const km2 = m2 / 1e6;
+    return `${km2.toLocaleString("es-CL", { maximumFractionDigits: 1 })} km²`;
   }
-
-  const t = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy);
-  const tt = Math.max(0, Math.min(1, t));
-
-  const cx = x1 + tt * dx;
-  const cy = y1 + tt * dy;
-
-  const d = Math.hypot(x - cx, y - cy);
-  return { d, cx, cy };
+  return `${ha.toLocaleString("es-CL", { maximumFractionDigits: 1 })} ha`;
 }
 
-function minDistanceToRing(x, y, ring) {
-  let best = { d: Infinity, cx: null, cy: null };
-
-  for (let i = 0; i < ring.length - 1; i++) {
-    const [x1, y1] = ring[i];
-    const [x2, y2] = ring[i + 1];
-
-    const r = pointToSegmentDistanceWithPoint(x, y, x1, y1, x2, y2);
-    if (r.d < best.d) best = r;
-  }
-  return best; // { d, cx, cy }
+function bboxIntersects(b1, b2){
+  // [minLon,minLat,maxLon,maxLat]
+  return !(b2[0] > b1[2] || b2[2] < b1[0] || b2[1] > b1[3] || b2[3] < b1[1]);
 }
 
-function distanceToPerimeterUTM(feature, x, y) {
-  const g = feature.geometry;
-  let best = { d: Infinity, cx: null, cy: null };
-
-  if (g.type === "Polygon") {
-    g.coordinates.forEach(ring => {
-      const r = minDistanceToRing(x, y, ring);
-      if (r.d < best.d) best = r;
-    });
-  }
-
-  if (g.type === "MultiPolygon") {
-    g.coordinates.forEach(poly => {
-      poly.forEach(ring => {
-        const r = minDistanceToRing(x, y, ring);
-        if (r.d < best.d) best = r;
-      });
-    });
-  }
-
-  return best; // { d, cx, cy }
-}
-
-// Rumbo azimutal desde el Norte (0°) sentido horario: 90° Este, 180° Sur, 270° Oeste
-function rumboDesdeNorte(x1, y1, x2, y2) {
-  const dE = x2 - x1; // Este
-  const dN = y2 - y1; // Norte
-  let ang = Math.atan2(dE, dN) * 180 / Math.PI; // ojo: (E, N)
-  if (ang < 0) ang += 360;
-  return ang;
+function bboxContainsLonLat(bb, lon, lat) {
+  return lon >= bb[0] && lon <= bb[2] && lat >= bb[1] && lat <= bb[3];
 }
 
 /* ===========================
    Map init (OSM normal + fallback)
 =========================== */
-
 function crearMapa() {
   map = L.map("map", { zoomControl: true, preferCanvas: true })
     .setView(HOME_VIEW.center, HOME_VIEW.zoom);
 
-  // ✅ OSM normal (GeoIPT)
   const osmNormal = L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     {
@@ -185,7 +71,6 @@ function crearMapa() {
     }
   );
 
-  // ✅ Fallback OSM (HOT) - sigue siendo OSM
   const osmHOT = L.tileLayer(
     "https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
     {
@@ -199,7 +84,6 @@ function crearMapa() {
 
   osmNormal.addTo(map);
 
-  // Fallback automático si el normal falla (bloqueo/rate limit/adblock)
   let switched = false;
   osmNormal.on("tileerror", () => {
     if (switched) return;
@@ -209,6 +93,11 @@ function crearMapa() {
     toast("⚠️ OSM normal falló. Cambié a OSM HOT.", 2600);
   });
 
+  // Actualización dinámica por BBOX
+  map.on("moveend", scheduleStatsUpdate);
+  map.on("zoomend", scheduleStatsUpdate);
+
+  // Click opcional (no es necesario para el resumen, pero útil)
   map.on("click", onMapClick);
 
   setTimeout(() => map.invalidateSize(true), 250);
@@ -217,7 +106,6 @@ function crearMapa() {
 /* ===========================
    Regiones (solo navegación)
 =========================== */
-
 async function cargarRegiones() {
   const sel = document.getElementById("selRegion");
   if (!sel) return;
@@ -247,43 +135,28 @@ async function cargarRegiones() {
 
   sel.addEventListener("change", () => {
     const opt = sel.options[sel.selectedIndex];
-    if (!opt || !opt.value) {
-      setPanel({ nav: "—" });
-      return;
-    }
+    if (!opt || !opt.value) return;
+
     let center = null;
     try { center = JSON.parse(opt.dataset.center); } catch(_) {}
     const zoom = parseInt(opt.dataset.zoom || "7", 10);
 
     if (Array.isArray(center) && center.length === 2) {
       map.setView(center, zoom, { animate: true });
-      setPanel({ nav: opt.textContent });
       setTimeout(() => map.invalidateSize(true), 150);
+      scheduleStatsUpdate();
     }
   });
 }
 
 /* ===========================
-   GeoJSON load (UTM 19S)
+   GeoJSON load (WGS84 grados)
 =========================== */
-
 async function loadGeoJSON() {
   if (dataLoaded) return;
 
-  if (!window.proj4) {
-    throw new Error("proj4 no está cargado. Agrega proj4 antes de index.js");
-  }
-
-  // Definir UTM 19S si no existe
-  if (!proj4.defs(CRS_UTM19S)) {
-    proj4.defs(CRS_UTM19S, "+proj=utm +zone=19 +south +datum=WGS84 +units=m +no_defs");
-  }
-
-  setPanel({
-    estado: "Cargando…",
-    sub: `Cargando SNASPE desde ${GEOJSON_URL} (UTM 19S)`,
-    attrs: `<div class="muted">Cargando datos…</div>`
-  });
+  // UI inicial (barra)
+  setStatsUI("…", "…", "Cargando…");
 
   const res = await fetch(GEOJSON_URL, { cache: "no-store" });
   if (!res.ok) throw new Error(`No se pudo cargar ${GEOJSON_URL} (HTTP ${res.status})`);
@@ -296,8 +169,11 @@ async function loadGeoJSON() {
     const t = f?.geometry?.type;
     if (t === "Polygon" || t === "MultiPolygon") {
       try {
-        const bb = turf.bbox(f); // bbox en UTM (m)
-        featuresIndex.push({ feature: f, bbox: bb });
+        const bb = turf.bbox(f); // [minLon,minLat,maxLon,maxLat]
+        // (opcional) precalcula área total para modo rápido
+        let areaM2 = NaN;
+        try { areaM2 = turf.area(f); } catch(_) {}
+        featuresIndex.push({ feature: f, bbox: bb, areaM2 });
       } catch (_) {}
     }
   }
@@ -307,147 +183,125 @@ async function loadGeoJSON() {
   }
 
   dataLoaded = true;
-  toast(`✅ GeoJSON cargado (${featuresIndex.length} polígonos)`, 2000);
+  toast(`✅ Cargado: ${featuresIndex.length} polígonos`, 2000);
 
-  setPanel({
-    estado: "Listo",
-    sub: "Haz clic en el mapa para consultar pertenencia (punto/polígono).",
-    attrs: `<div class="muted">Datos cargados. Aún no hay selección.</div>`
-  });
+  // Primer cálculo
+  scheduleStatsUpdate();
 }
 
 /* ===========================
-   Click consulta (WGS84 -> UTM19S)
-   + distancia y rumbo
+   Stats BBOX (dinámico)
+   - “protegidas” = esta capa (por ahora)
+   - “total” = igual (por ahora)
+   - superficie = área intersección con bbox
 =========================== */
+const elStProtected = document.getElementById("stProtected");
+const elStTotal     = document.getElementById("stTotal");
+const elStArea      = document.getElementById("stArea");
 
-async function onMapClick(e) {
-  const lat = e.latlng.lat;
-  const lng = e.latlng.lng;
+function setStatsUI(a, b, c){
+  if (elStProtected) elStProtected.textContent = a;
+  if (elStTotal)     elStTotal.textContent     = b;
+  if (elStArea)      elStArea.textContent      = c;
+}
 
-  if (clickMarker) map.removeLayer(clickMarker);
-  clickMarker = L.circleMarker([lat, lng], {
-    radius: 7, weight: 2, opacity: 1, fillOpacity: 0.25
-  }).addTo(map);
-
-  const sel = document.getElementById("selRegion");
-  const navName = (sel && sel.value) ? sel.options[sel.selectedIndex].textContent : "—";
-
-  setPanel({
-    nav: navName,
-    click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-    estado: "Consultando…",
-    sub: "Reproyectando clic a UTM 19S y calculando distancia + rumbo…",
-    attrs: `<div class="muted">Procesando…</div>`
+let _statsRAF = false;
+function scheduleStatsUpdate(){
+  if (_statsRAF) return;
+  _statsRAF = true;
+  requestAnimationFrame(() => {
+    _statsRAF = false;
+    updateBboxStats().catch(err => console.warn(err));
   });
+}
 
-  try {
-    await loadGeoJSON();
-  } catch (err) {
-    console.error(err);
-    toast("⚠️ Error cargando GeoJSON (ver consola)", 2600);
-    setPanel({
-      nav: navName,
-      click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-      estado: "Error",
-      sub: "No se pudo cargar el GeoJSON.",
-      attrs: `<div class="muted">Revisa consola.</div>`
-    });
-    return;
-  }
-
-  // ✅ WGS84 -> UTM19S
-  const [x, y] = proj4(CRS_WGS84, CRS_UTM19S, [lng, lat]);
-
-  const pt = turf.point([x, y]);
-
-  // 1) Buscar si cae dentro
-  for (const it of featuresIndex) {
-    if (!bboxContainsXY(it.bbox, x, y)) continue;
-
-    let inside = false;
-    try { inside = turf.booleanPointInPolygon(pt, it.feature); } catch (_) {}
-
-    if (inside) {
-      // DENTRO: distancia mínima al perímetro para salir + rumbo hacia el perímetro
-      const r = distanceToPerimeterUTM(it.feature, x, y);
-      const rumbo = rumboDesdeNorte(x, y, r.cx, r.cy);
-
-      toast(`✅ DENTRO · salida ${fmtMeters(r.d)} · ${rumbo.toFixed(1)}°`, 2200);
-
-      setPanel({
-        nav: navName,
-        click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-        estado: "DENTRO",
-        sub: `Para salir: ${fmtMeters(r.d)} · Rumbo: ${rumbo.toFixed(1)}° (N=0°, S=180°)`,
-        attrs: attrsToHtml(it.feature.properties || {})
-      });
+async function updateBboxStats(){
+  // si aún no cargó, intenta cargar automáticamente (lazy)
+  if (!dataLoaded) {
+    try { await loadGeoJSON(); } catch (e) {
+      console.error(e);
+      setStatsUI("—", "—", "—");
       return;
     }
   }
 
-  // 2) FUERA: polígono más cercano por distancia al perímetro
-  let best = { d: Infinity, cx: null, cy: null, feature: null };
+  if (!featuresIndex.length || !map){
+    setStatsUI("—", "—", "—");
+    return;
+  }
 
-  for (const it of featuresIndex) {
-    // optimización: bbox expandida (cuando ya existe candidato)
-    if (isFinite(best.d)) {
-      const bb = it.bbox;
-      const pad = best.d;
-      if (
-        x < bb[0] - pad || x > bb[2] + pad ||
-        y < bb[1] - pad || y > bb[3] + pad
-      ) continue;
+  const b = map.getBounds();
+  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  const bboxPoly = turf.bboxPolygon(bbox);
+
+  let totalAreas = 0;
+  let protectedAreas = 0;
+  let protectedAreaM2 = 0;
+
+  for (const it of featuresIndex){
+    if (!bboxIntersects(it.bbox, bbox)) continue;
+
+    let touches = false;
+    try { touches = turf.booleanIntersects(it.feature, bboxPoly); } catch(_) {}
+    if (!touches) continue;
+
+    totalAreas += 1;
+    protectedAreas += 1;
+
+    // Área dentro del bbox: intersección (más correcto)
+    // Nota: puede ser pesado en datasets grandes. Si se vuelve lento, cambiamos a “modo rápido”.
+    try {
+      const inter = turf.intersect(it.feature, bboxPoly);
+      if (inter) protectedAreaM2 += turf.area(inter);
+      else protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
+    } catch(_) {
+      // fallback
+      protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
     }
-
-    const r = distanceToPerimeterUTM(it.feature, x, y);
-    if (r.d < best.d) best = { ...r, feature: it.feature };
   }
 
-  if (best.feature) {
-    const rumbo = rumboDesdeNorte(x, y, best.cx, best.cy);
+  setStatsUI(fmtInt(protectedAreas), fmtInt(totalAreas), fmtArea(protectedAreaM2));
+}
 
-    toast(`❌ FUERA · ${fmtMeters(best.d)} · ${rumbo.toFixed(1)}°`, 2400);
+/* ===========================
+   Click (opcional): marcador y “dentro”
+   - No afecta el resumen
+=========================== */
+async function onMapClick(e){
+  const lat = e.latlng.lat;
+  const lon = e.latlng.lng;
 
-    setPanel({
-      nav: navName,
-      click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-      estado: "FUERA",
-      sub: `Más cercano: ${fmtMeters(best.d)} · Rumbo: ${rumbo.toFixed(1)}° (N=0°, S=180°)`,
-      attrs: attrsToHtml(best.feature.properties || {})
-    });
-  } else {
-    toast("❌ FUERA · sin polígonos válidos", 2200);
-    setPanel({
-      nav: navName,
-      click: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
-      estado: "FUERA",
-      sub: "No se encontraron polígonos válidos para calcular distancia.",
-      attrs: `<div class="muted">Sin datos válidos.</div>`
-    });
+  if (clickMarker) map.removeLayer(clickMarker);
+  clickMarker = L.circleMarker([lat, lon], {
+    radius: 7, weight: 2, opacity: 1, fillOpacity: 0.25
+  }).addTo(map);
+
+  // carga si falta
+  try { await loadGeoJSON(); } catch(_) {}
+
+  const pt = turf.point([lon, lat]);
+
+  // cuenta cuántos polígonos contienen el punto (normalmente 0 o 1)
+  let hits = 0;
+  for (const it of featuresIndex){
+    if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
+    let inside = false;
+    try { inside = turf.booleanPointInPolygon(pt, it.feature); } catch(_) {}
+    if (inside) hits++;
   }
+
+  toast(hits ? `✅ Punto dentro de ${hits} polígono(s)` : "❌ Punto fuera", 1600);
 }
 
 /* ===========================
    Botones
 =========================== */
-
-function clearSelection() {
+function clearPoint(){
   if (clickMarker) {
     map.removeLayer(clickMarker);
     clickMarker = null;
   }
-
-  const sel = document.getElementById("selRegion");
-  const navName = (sel && sel.value) ? sel.options[sel.selectedIndex].textContent : "—";
-
-  setPanel({
-    nav: navName,
-    click: "—",
-    estado: dataLoaded ? "Listo" : "—",
-    sub: "Haz clic en el mapa para consultar pertenencia (punto/polígono).",
-    attrs: `<div class="muted">Aún no hay selección.</div>`
-  });
+  toast("🧹 Punto limpiado", 1200);
 }
 
 function bindUI() {
@@ -461,6 +315,7 @@ function bindUI() {
       map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true });
       toast("🏠 Vista inicial", 1200);
       setTimeout(() => map.invalidateSize(true), 150);
+      scheduleStatsUpdate();
     });
   }
 
@@ -473,16 +328,17 @@ function bindUI() {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
+          const lon = pos.coords.longitude;
 
           if (userMarker) map.removeLayer(userMarker);
-          userMarker = L.circleMarker([lat, lng], {
+          userMarker = L.circleMarker([lat, lon], {
             radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
           }).addTo(map);
 
-          map.setView([lat, lng], Math.max(map.getZoom(), 14), { animate: true });
+          map.setView([lat, lon], Math.max(map.getZoom(), 14), { animate: true });
           toast("🎯 Ubicación detectada", 1400);
           setTimeout(() => map.invalidateSize(true), 150);
+          scheduleStatsUpdate();
         },
         () => toast("⚠️ No pude obtener tu ubicación", 2600),
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -491,16 +347,15 @@ function bindUI() {
   }
 
   if (btnClear) {
-    btnClear.addEventListener("click", () => {
-      clearSelection();
-      toast("🧹 Selección limpiada", 1200);
-    });
+    btnClear.addEventListener("click", clearPoint);
   }
 
   if (btnPreload) {
     btnPreload.addEventListener("click", async () => {
       try {
         await loadGeoJSON();
+        toast("⬇️ Datos precargados", 1400);
+        scheduleStatsUpdate();
       } catch (err) {
         console.error(err);
         toast("⚠️ Error precargando GeoJSON (ver consola)", 2400);
@@ -512,11 +367,13 @@ function bindUI() {
 /* ===========================
    Init
 =========================== */
-
 (async function init() {
   crearMapa();
   bindUI();
   await cargarRegiones();
-  clearSelection();
-  toast("Listo ✅ Selecciona región para navegar y haz clic para consultar SNASPE.", 2600);
+
+  // precarga “silenciosa” (puedes comentarla si no quieres)
+  loadGeoJSON().catch(err => console.warn(err));
+
+  toast("Listo ✅ Pan/Zoom para ver resumen SNASPE en BBOX.", 2400);
 })();

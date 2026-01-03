@@ -14,7 +14,7 @@
       <div class="logo">🌿</div>
       <div class="title">
         <h1>GeoConserva</h1>
-        <span>Consulta SNASPE (KML) + Navegación por regiones</span>
+        <span>SNASPE · Resumen dinámico en BBOX</span>
       </div>
     </div>
 
@@ -25,45 +25,30 @@
 
       <button id="btnHome" class="btn" title="Vista inicial">🏠</button>
       <button id="btnGPS" class="btn" title="Ir a mi ubicación">🎯</button>
+
+      <!-- Opcionales -->
+      <button id="btnPreload" class="btn" title="Precargar GeoJSON">⬇️</button>
+      <button id="btnClear" class="btn" title="Limpiar punto">🧹</button>
     </div>
   </header>
 
+  <!-- Barra resumen dinámica (BBOX) -->
+  <div class="statsbar" aria-live="polite">
+    <div class="stat">
+      <div class="k">Áreas protegidas (BBOX)</div>
+      <div class="v" id="stProtected">—</div>
+    </div>
+    <div class="stat">
+      <div class="k">Total áreas (BBOX)</div>
+      <div class="v" id="stTotal">—</div>
+    </div>
+    <div class="stat">
+      <div class="k">Sup. protegida (BBOX)</div>
+      <div class="v" id="stArea">—</div>
+    </div>
+  </div>
+
   <main class="main">
-    <section class="sidebar">
-      <div class="sb-head">
-        <div class="sb-title">Resultado</div>
-        <div class="sb-sub" id="sbSub">Haz clic en el mapa para consultar pertenencia (punto/polígono).</div>
-      </div>
-
-      <div class="sb-box">
-        <div class="sb-kv">
-          <div class="k">Navegación</div>
-          <div class="v" id="sbNav">—</div>
-        </div>
-        <div class="sb-kv">
-          <div class="k">Clic</div>
-          <div class="v" id="sbClick">—</div>
-        </div>
-        <div class="sb-kv">
-          <div class="k">Estado</div>
-          <div class="v" id="sbEstado">—</div>
-        </div>
-      </div>
-
-      <div class="sb-section">
-        <div class="sb-section-title">Polígono tocado</div>
-        <div class="pill" id="sbCategoria">SNASPE</div>
-        <div class="attrs" id="sbAttrs">
-          <div class="muted">Aún no hay selección.</div>
-        </div>
-      </div>
-
-      <div class="sb-foot">
-        <button class="btn2" id="btnClear">Limpiar selección</button>
-        <button class="btn2" id="btnPreload">Precargar KML</button>
-      </div>
-    </section>
-
     <section class="mapwrap">
       <div id="map"></div>
       <div id="toast" class="toast" aria-live="polite"></div>
@@ -72,9 +57,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
-  <script src="https://unpkg.com/togeojson@0.16.0/dist/togeojson.umd.js"></script>
-  <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
-
 
   <script src="js/index.js"></script>
 </body>
