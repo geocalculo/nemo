@@ -9,6 +9,7 @@
 
 const REGIONES_URL = "data/regiones.json";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
+const REGION_ZOOM_50K = 14;
 
 // ✅ Configura aquí tus capas (puedes sumar más)
 const LAYERS = [
@@ -142,6 +143,7 @@ async function cargarRegiones() {
     return;
   }
 
+  const zoom = REGION_ZOOM_50K; // fuerza ~1:50.000
   const regiones = Array.isArray(data) ? data : (data.regiones || []);
   for (const r of regiones) {
     const opt = document.createElement("option");
@@ -499,3 +501,4 @@ function bindUI() {
 
   toast("Listo ✅ Clic para vincular 1 polígono por capa y abrir MapaOut.", 2600);
 })();
+

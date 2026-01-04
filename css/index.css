@@ -164,3 +164,12 @@ select{
   .stat .k{ font-size:11px; }
   .stat .v{ font-size:14px; }
 }
+/* ===== Select (mejor contraste en móvil) ===== */
+select{
+  color: var(--text);
+  background-color: rgba(16,26,46,.35);
+}
+select option{
+  color: var(--text);
+  background-color: #101a2e;
+}
