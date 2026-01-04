@@ -1,271 +1,430 @@
-/************************************************************
- * GeoNEMO - mapaout.js
- * - Lee el resultado desde localStorage
- * - Muestra mapa cuadrado y dibuja:
- *    1) Polígono vinculado (verde brillante semitransparente)
- *    2) Punto consultado (icono llamativo)
- * - Tabla por capa: permite cambiar capa activa
- ************************************************************/
-const OUT_STORAGE_KEY = "geonemo_out_v2";
+(() => {
+  "use strict";
 
-function esc(s){
-  return String(s ?? "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
+  const STORAGE_KEY = "geonemo_out_v2";
 
-function getOut(){
-  try{
-    const raw = localStorage.getItem(OUT_STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch(e){
+  const el = {
+    map: document.getElementById("map"),
+    toast: document.getElementById("toast"),
+
+    btnBack: document.getElementById("btnBack"),
+    btnFit: document.getElementById("btnFit"),
+
+    btnDownloads: document.getElementById("btnDownloads"),
+    downloadsMenu: document.getElementById("downloadsMenu"),
+    btnDownloadJSON: document.getElementById("btnDownloadJSON"),
+    btnDownloadSelectedGeoJSON: document.getElementById("btnDownloadSelectedGeoJSON"),
+    btnCopyLink: document.getElementById("btnCopyLink"),
+
+    kpiStatus: document.getElementById("kpiStatus"),
+    kpiDist: document.getElementById("kpiDist"),
+    kpiLayer: document.getElementById("kpiLayer"),
+    btnEvidence: document.getElementById("btnEvidence"),
+    btnTech: document.getElementById("btnTech"),
+    techBox: document.getElementById("techBox"),
+    techUpdated: document.getElementById("techUpdated"),
+    techClick: document.getElementById("techClick"),
+    techBbox: document.getElementById("techBbox"),
+
+    layersCount: document.getElementById("layersCount"),
+    layersList: document.getElementById("layersList"),
+
+    attrsBox: document.getElementById("attrsBox"),
+  };
+
+  let payload = null;
+  let map = null;
+  let pointMarker = null;
+  let polyLayer = null;
+  let selectedLayerId = null;
+
+  function showToast(msg) {
+    if (!el.toast) return;
+    el.toast.textContent = msg;
+    el.toast.classList.add("show");
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => el.toast.classList.remove("show"), 2200);
+  }
+
+  function safeText(v) {
+    if (v === null || v === undefined) return "";
+    return String(v);
+  }
+
+  function fmtDist(m) {
+    if (m === null || m === undefined || Number.isNaN(Number(m))) return "—";
+    const mm = Math.abs(Number(m));
+    if (mm < 1000) return `${Math.round(mm)} m`;
+    return `${(mm / 1000).toFixed(2)} km`;
+  }
+
+  function normalizeClick(click) {
+    if (!click) return null;
+    if (Array.isArray(click) && click.length >= 2) return { lat: +click[0], lng: +click[1] };
+    if (typeof click === "object" && click.lat !== undefined && click.lng !== undefined) return { lat: +click.lat, lng: +click.lng };
+    if (typeof click === "object" && click.y !== undefined && click.x !== undefined) return { lat: +click.y, lng: +click.x };
     return null;
   }
-}
 
-function setText(id, v){
-  const el = document.getElementById(id);
-  if (el) el.textContent = v ?? "—";
-}
-
-function fmtLatLon(lat, lon){
-  if (!isFinite(lat) || !isFinite(lon)) return "—";
-  return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
-}
-
-function fmtBbox(bb){
-  if (!bb) return "—";
-  return `${bb.west.toFixed(3)}, ${bb.south.toFixed(3)} — ${bb.east.toFixed(3)}, ${bb.north.toFixed(3)}`;
-}
-
-function badge(linkType){
-  if (linkType === "inside") return `<span class="badge ok">inside</span>`;
-  if (linkType === "nearest_perimeter") return `<span class="badge warn">proximidad</span>`;
-  if (linkType === "none") return `<span class="badge err">sin match</span>`;
-  return `<span class="badge err">${esc(linkType)}</span>`;
-}
-
-function renderAttrs(props){
-  const el = document.getElementById("attrs");
-  if (!el) return;
-  const keys = Object.keys(props || {});
-  if (!keys.length){
-    el.innerHTML = '<div class="muted">Sin atributos.</div>';
-    return;
+  function statusToBadge(status) {
+    const s = String(status || "").toLowerCase();
+    if (["in", "inside", "within", "onedge", "on_edge", "edge"].includes(s)) return { label: "DENTRO", cls: "badge--in" };
+    if (["prox", "proximity", "buffer", "zam"].includes(s)) return { label: "PROXIMIDAD", cls: "badge--prox" };
+    if (["out", "outside", "fuera"].includes(s)) return { label: "FUERA", cls: "badge--out" };
+    if (["none", "nomatch", "no match", "sin match", "sin_match"].includes(s)) return { label: "SIN MATCH", cls: "badge--neutral" };
+    return { label: safeText(status || "—").toUpperCase() || "—", cls: "badge--neutral" };
   }
 
-  const preferred = ["NOMBRE","Nombre","nombre","NAME","Name","name","CATEGORIA","categoria","TIPO","tipo","COD","codigo","ID","id"];
-  const ordered = [];
-  for (const k of preferred) if (k in props) ordered.push(k);
-  for (const k of keys) if (!ordered.includes(k)) ordered.push(k);
+  function rowBadgeMini(status) {
+    const s = String(status || "").toLowerCase();
+    if (["in", "inside", "within", "edge", "onedge"].includes(s)) return { label: "in", cls: "in" };
+    if (["prox", "proximity", "buffer", "zam"].includes(s)) return { label: "prox", cls: "prox" };
+    if (["out", "outside", "fuera"].includes(s)) return { label: "out", cls: "out" };
+    if (["none", "nomatch", "no match", "sin match", "sin_match"].includes(s)) return { label: "sin", cls: "none" };
+    return { label: "—", cls: "none" };
+  }
 
-  el.innerHTML = ordered.map(k => {
-    const v = props[k];
-    const vv = (v === null || v === undefined || v === "") ? "—" : String(v);
-    return `<div class="attr"><div class="ak">${esc(k)}</div><div class="av">${esc(vv)}</div></div>`;
-  }).join("");
-}
+  function dom(tag, attrs = {}, children = []) {
+    const n = document.createElement(tag);
+    Object.entries(attrs).forEach(([k, v]) => {
+      if (k === "class") n.className = v;
+      else if (k === "text") n.textContent = v;
+      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.substring(2), v);
+      else n.setAttribute(k, v);
+    });
+    (Array.isArray(children) ? children : [children]).forEach(c => {
+      if (c === null || c === undefined) return;
+      if (typeof c === "string") n.appendChild(document.createTextNode(c));
+      else n.appendChild(c);
+    });
+    return n;
+  }
 
-function downloadJson(obj){
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "geonemo_resultado.json";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 500);
-}
+  function downloadText(filename, text, mime = "application/json") {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
-/* ===========================
-   MapaOut: Leaflet
-=========================== */
-let outMap = null;
-let polyLayer = null;
-let pointLayer = null;
+  function toggleMenu(forceOpen = null) {
+    if (!el.downloadsMenu) return;
+    const open = forceOpen !== null ? forceOpen : !el.downloadsMenu.classList.contains("open");
+    el.downloadsMenu.classList.toggle("open", open);
+    el.downloadsMenu.setAttribute("aria-hidden", open ? "false" : "true");
+  }
 
-function initOutMap(){
-  outMap = L.map("outMap", { zoomControl: true, preferCanvas:true });
+  function hasGeoJSON(gj) {
+    return gj && (gj.type === "Feature" || gj.type === "FeatureCollection" || gj.type === "Polygon" || gj.type === "MultiPolygon");
+  }
 
-  // Mantener el mismo basemap "brutal"
-  const topoBase = L.tileLayer(
-    "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-    { maxZoom: 17, subdomains:"abc", opacity:1.0,
-      attribution:"Map data: &copy; OpenStreetMap contributors, SRTM | OpenTopoMap"
+  function toFeatureCollection(gj) {
+    if (!gj) return null;
+    if (gj.type === "FeatureCollection") return gj;
+    if (gj.type === "Feature") return { type: "FeatureCollection", features: [gj] };
+    if (gj.type === "Polygon" || gj.type === "MultiPolygon") {
+      return { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: gj }] };
     }
-  );
-
-  const satOverlay = L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 19, opacity:0.25, attribution:"Tiles &copy; Esri" }
-  );
-
-  topoBase.addTo(outMap);
-  satOverlay.addTo(outMap);
-
-  // Vista inicial (se ajusta al renderizar)
-  outMap.setView([-33.5, -71.0], 5);
-  setTimeout(() => outMap.invalidateSize(true), 250);
-}
-
-function makePointIcon(){
-  return L.divIcon({
-    className: "",
-    html: '<div class="pin" title="Punto consultado"></div>',
-    iconSize: [18,18],
-    iconAnchor: [9,9]
-  });
-}
-
-function clearMapDraw(){
-  if (polyLayer){ try{ outMap.removeLayer(polyLayer); } catch(_){} polyLayer=null; }
-  if (pointLayer){ try{ outMap.removeLayer(pointLayer); } catch(_){} pointLayer=null; }
-}
-
-function drawSelection(feature, click){
-  if (!outMap) return;
-  clearMapDraw();
-
-  // Punto consultado
-  if (click && isFinite(click.lat) && isFinite(click.lon)){
-    pointLayer = L.marker([click.lat, click.lon], { icon: makePointIcon() }).addTo(outMap);
+    return null;
   }
 
-  // Polígono vinculado (verde brillante semitransparente)
-  if (feature && feature.geometry){
-    polyLayer = L.geoJSON(feature, {
-      style: {
-        color: "#22c55e",
-        weight: 3,
-        opacity: 1,
-        fillColor: "#22c55e",
-        fillOpacity: 0.30
+  function loadPayload() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    try { return JSON.parse(raw); }
+    catch { return null; }
+  }
+
+  function buildFallbackPayload() {
+    return {
+      updatedAt: new Date().toISOString(),
+      click: { lat: -33.45, lng: -70.66 },
+      bbox: [-70.9, -33.7, -70.4, -33.2],
+      summary: { status: "OUT", minDistanceM: null, dominantLayer: "—" },
+      layers: [{ id: "snaspe_mn", name: "SNASPE - Monumento Natural", status: "sin match", distanceM: null }]
+    };
+  }
+
+  function initMap(click) {
+    map = L.map("map", { zoomControl: true, attributionControl: true });
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
+
+    polyLayer = L.geoJSON(null, {
+      style: () => ({
+        color: "#38bdf8",
+        weight: 2,
+        fillColor: "#38bdf8",
+        fillOpacity: 0.14,
+      }),
+    }).addTo(map);
+
+    const latlng = click ? [click.lat, click.lng] : [-33.45, -70.66];
+    pointMarker = L.circleMarker(latlng, {
+      radius: 8,
+      weight: 2,
+      color: "#ffffff",
+      fillColor: "#2dd4bf",
+      fillOpacity: 0.95,
+    }).addTo(map);
+
+    map.setView(latlng, 10);
+  }
+
+  function setPolygonOnMap(gj) {
+    polyLayer.clearLayers();
+    const fc = toFeatureCollection(gj);
+    if (!fc) return;
+    polyLayer.addData(fc);
+  }
+
+  function fitToContext() {
+    try {
+      if (polyLayer && polyLayer.getLayers().length) {
+        const b = polyLayer.getBounds();
+        if (b.isValid()) { map.fitBounds(b.pad(0.12)); return; }
       }
-    }).addTo(outMap);
-
-    // Ajustar vista a polígono + punto
-    const bounds = polyLayer.getBounds();
-    if (pointLayer) bounds.extend(pointLayer.getLatLng());
-    outMap.fitBounds(bounds.pad(0.20), { animate: true });
-  } else if (pointLayer){
-    outMap.setView(pointLayer.getLatLng(), 12, { animate:true });
-  }
-}
-
-/* ===========================
-   Tabla de capas y selección
-=========================== */
-function renderLinksTable(links){
-  const container = document.getElementById("links");
-  if (!container) return;
-
-  if (!Array.isArray(links) || !links.length){
-    container.innerHTML = '<div class="muted" style="padding:12px;">No hay capas vinculadas.</div>';
-    return;
+      if (payload?.bbox && Array.isArray(payload.bbox) && payload.bbox.length === 4) {
+        const [w, s, e, n] = payload.bbox.map(Number);
+        if ([w,s,e,n].every(v => Number.isFinite(v))) {
+          map.fitBounds([[s, w], [n, e]], { padding: [30, 30] });
+          return;
+        }
+      }
+      if (pointMarker) map.setView(pointMarker.getLatLng(), 11);
+    } catch {}
   }
 
-  const rows = links.map((l, i) => {
-    const dist = (l.distance_km == null) ? "—" : `${l.distance_km.toFixed(3)} km`;
-    return `<tr data-idx="${i}">
-      <td>${esc(l.layer_name || l.layer_id || "—")}</td>
-      <td>${badge(l.link_type)}</td>
-      <td class="mono">${dist}</td>
-      <td>${l.feature ? "✔" : "—"}</td>
-    </tr>`;
-  }).join("");
+  function renderAttrs(obj) {
+    el.attrsBox.innerHTML = "";
+    if (!obj || typeof obj !== "object" || !Object.keys(obj).length) {
+      el.attrsBox.appendChild(dom("div", { class: "muted", text: "Sin atributos." }));
+      return;
+    }
 
-  container.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Capa</th>
-          <th>Vinculación</th>
-          <th>Dist. perímetro</th>
-          <th>Polígono</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-}
-
-function setActiveRow(idx){
-  const tbody = document.querySelector("#links tbody");
-  if (!tbody) return;
-  for (const tr of tbody.querySelectorAll("tr")){
-    tr.classList.toggle("active", tr.getAttribute("data-idx") === String(idx));
-  }
-}
-
-(function init(){
-  const out = getOut();
-
-  const btnBack = document.getElementById("btnBack");
-  const btnDownloadJson = document.getElementById("btnDownloadJson");
-  const btnClearOut = document.getElementById("btnClearOut");
-
-  if (btnBack) btnBack.addEventListener("click", () => history.back());
-  if (btnDownloadJson) btnDownloadJson.addEventListener("click", () => {
-    const obj = getOut();
-    if (!obj) return alert("No hay resultado guardado todavía.");
-    downloadJson(obj);
-  });
-  if (btnClearOut) btnClearOut.addEventListener("click", () => {
-    localStorage.removeItem(OUT_STORAGE_KEY);
-    location.reload();
-  });
-
-  initOutMap();
-
-  if (!out){
-    setText("outUpdated","—");
-    setText("outClick","—");
-    setText("outBbox","—");
-    setText("st1","—"); setText("st2","—"); setText("st3","—");
-    renderLinksTable([]);
-    renderAttrs({});
-    drawSelection(null, null);
-    return;
+    const table = dom("table", { class: "attrTable" });
+    Object.keys(obj).sort().forEach((k) => {
+      const tr = dom("tr");
+      tr.appendChild(dom("td", { class: "k", text: safeText(k) }));
+      tr.appendChild(dom("td", { class: "v", text: safeText(obj[k]) }));
+      table.appendChild(tr);
+    });
+    el.attrsBox.appendChild(table);
   }
 
-  setText("outUpdated", out.updated_at || out.created_at || "—");
-  setText("outClick", fmtLatLon(out?.click?.lat, out?.click?.lon));
-  setText("outBbox", fmtBbox(out?.bbox || null));
-
-  const st = out.stats || {};
-  setText("st1", st.areas_bbox != null ? String(st.areas_bbox) : "—");
-  setText("st2", st.total_bbox != null ? String(st.total_bbox) : "—");
-  setText("st3", st.protected_area_fmt || "—");
-
-  const links = Array.isArray(out.links) ? out.links : [];
-  renderLinksTable(links);
-
-  // Selección inicial: primera capa con feature; si no, la primera
-  let active = 0;
-  const firstWithFeature = links.findIndex(l => !!l.feature);
-  if (firstWithFeature >= 0) active = firstWithFeature;
-
-  setActiveRow(active);
-  renderAttrs(links[active]?.feature?.properties || {});
-  drawSelection(links[active]?.feature || null, out.click || null);
-
-  // Click en tabla => cambia capa activa
-  const tbody = document.querySelector("#links tbody");
-  if (tbody){
-    tbody.addEventListener("click", (ev) => {
-      const tr = ev.target.closest("tr");
-      if (!tr) return;
-      const idx = parseInt(tr.getAttribute("data-idx"), 10);
-      if (Number.isNaN(idx)) return;
-
-      setActiveRow(idx);
-      renderAttrs(links[idx]?.feature?.properties || {});
-      drawSelection(links[idx]?.feature || null, out.click || null);
+  function setActiveRow(id) {
+    [...el.layersList.querySelectorAll(".layerRow")].forEach(r => {
+      r.classList.toggle("active", r.getAttribute("data-id") === id);
     });
   }
+
+  function getLayerById(id) {
+    const layers = Array.isArray(payload.layers) ? payload.layers : [];
+    return layers.find(l => l.__id === id) || null;
+  }
+
+  function selectLayer(id, opts = { zoom: true }) {
+    const layer = getLayerById(id);
+    if (!layer) return;
+    selectedLayerId = id;
+
+    setActiveRow(id);
+
+    const hasPoly = hasGeoJSON(layer.polygon);
+    el.btnDownloadSelectedGeoJSON.disabled = !hasPoly;
+
+    // props
+    let props = null;
+    if (layer.polygon && layer.polygon.type === "Feature" && layer.polygon.properties) props = layer.polygon.properties;
+    else props = layer.properties || null;
+    renderAttrs(props);
+
+    if (hasPoly) {
+      setPolygonOnMap(layer.polygon);
+      if (opts.zoom) fitToContext();
+      showToast("Polígono seleccionado.");
+    } else {
+      polyLayer.clearLayers();
+      if (opts.zoom) fitToContext();
+      showToast("Sin polígono asociado (sin match).");
+    }
+
+    // KPIs desde la capa seleccionada
+    el.kpiLayer.textContent = safeText(layer.name || "—");
+    const dist = (layer.distanceM !== null && layer.distanceM !== undefined) ? layer.distanceM : (payload?.summary?.minDistanceM ?? null);
+    el.kpiDist.textContent = fmtDist(dist);
+
+    const b2 = statusToBadge(layer.status);
+    el.kpiStatus.className = `badge ${b2.cls}`;
+    el.kpiStatus.textContent = b2.label;
+  }
+
+  function renderTopKPIs() {
+    const summary = payload.summary || {};
+    const layers = Array.isArray(payload.layers) ? payload.layers : [];
+
+    let status = summary.status;
+    let dominantLayer = summary.dominantLayer;
+
+    if (!status || !dominantLayer) {
+      const rank = (s) => {
+        const x = String(s || "").toLowerCase();
+        if (["in","inside","within","edge","onedge"].includes(x)) return 4;
+        if (["prox","proximity","buffer","zam"].includes(x)) return 3;
+        if (["out","outside","fuera"].includes(x)) return 2;
+        if (["none","nomatch","no match","sin match","sin_match"].includes(x)) return 1;
+        return 0;
+      };
+      const best = [...layers].sort((a,b) => rank(b.status) - rank(a.status))[0];
+      if (!status && best?.status) status = best.status;
+      if (!dominantLayer && best?.name) dominantLayer = best.name;
+    }
+
+    const b = statusToBadge(status);
+    el.kpiStatus.className = `badge ${b.cls}`;
+    el.kpiStatus.textContent = b.label;
+
+    let minD = summary.minDistanceM;
+    if (minD === null || minD === undefined) {
+      const ds = layers.map(l => l?.distanceM).filter(v => v !== null && v !== undefined && Number.isFinite(Number(v)));
+      if (ds.length) minD = Math.min(...ds.map(Number));
+    }
+    el.kpiDist.textContent = fmtDist(minD);
+    el.kpiLayer.textContent = dominantLayer ? safeText(dominantLayer) : "—";
+
+    // tech
+    el.techUpdated.textContent = safeText(payload.updatedAt || "—");
+    const click = normalizeClick(payload.click);
+    el.techClick.textContent = click ? `${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}` : "—";
+    if (payload?.bbox && Array.isArray(payload.bbox) && payload.bbox.length === 4) {
+      const [w,s,e,n] = payload.bbox;
+      el.techBbox.textContent = `${Number(w).toFixed(3)}, ${Number(s).toFixed(3)} — ${Number(e).toFixed(3)}, ${Number(n).toFixed(3)}`;
+    } else el.techBbox.textContent = "—";
+  }
+
+  function renderLayers() {
+    const layers = Array.isArray(payload.layers) ? payload.layers : [];
+    el.layersCount.textContent = String(layers.length || 0);
+    el.layersList.innerHTML = "";
+
+    if (!layers.length) {
+      el.layersList.appendChild(dom("div", { class: "muted", text: "Sin capas en el resultado." }));
+      return;
+    }
+
+    layers.forEach((layer) => {
+      const id = safeText(layer.id || layer.name || `layer_${Math.random().toString(16).slice(2)}`);
+      layer.__id = id;
+
+      const badge = rowBadgeMini(layer.status);
+      const dist = fmtDist(layer.distanceM);
+
+      const row = dom("div", { class: "layerRow", "data-id": id });
+      const left = dom("div", { class: "layerRow__left" }, [
+        dom("div", { class: "layerRow__name", text: safeText(layer.name || "Capa") }),
+        dom("div", { class: "layerRow__meta" }, [
+          dom("span", { class: `badgeMini ${badge.cls}`, text: badge.label }),
+          dom("span", { class: "small", text: `Dist.: ${dist}` }),
+        ]),
+      ]);
+
+      const right = dom("div", { class: "layerRow__right" }, [
+        dom("button", {
+          class: "iconBtn",
+          title: "Zoom/centrar",
+          onClick: (ev) => { ev.stopPropagation(); selectLayer(id, { zoom: true }); }
+        }, "⤢"),
+        dom("button", {
+          class: "iconBtn",
+          title: "Atributos",
+          onClick: (ev) => { ev.stopPropagation(); selectLayer(id, { zoom: false }); }
+        }, "≡"),
+      ]);
+
+      row.append(left, right);
+      row.addEventListener("click", () => selectLayer(id, { zoom: true }));
+      el.layersList.appendChild(row);
+    });
+  }
+
+  function wireEvents() {
+    el.btnBack.addEventListener("click", () => {
+      if (history.length > 1) history.back();
+      else location.href = "./index.html";
+    });
+
+    el.btnFit.addEventListener("click", () => fitToContext());
+
+    el.btnDownloads.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
+    document.addEventListener("click", () => toggleMenu(false));
+
+    el.btnDownloadJSON.addEventListener("click", () => {
+      toggleMenu(false);
+      downloadText(`geonemo_resultado_${Date.now()}.json`, JSON.stringify(payload, null, 2), "application/json");
+      showToast("Descargando JSON…");
+    });
+
+    el.btnDownloadSelectedGeoJSON.addEventListener("click", () => {
+      toggleMenu(false);
+      const layer = selectedLayerId ? getLayerById(selectedLayerId) : null;
+      if (!layer || !hasGeoJSON(layer.polygon)) return;
+      const fc = toFeatureCollection(layer.polygon);
+      downloadText(`geonemo_poligono_${(layer.__id || "seleccion")}.geojson`, JSON.stringify(fc, null, 2), "application/geo+json");
+      showToast("Descargando GeoJSON…");
+    });
+
+    el.btnCopyLink.addEventListener("click", async () => {
+      toggleMenu(false);
+      const click = normalizeClick(payload.click);
+      const url = new URL(location.href);
+      if (click) { url.searchParams.set("lat", String(click.lat)); url.searchParams.set("lng", String(click.lng)); }
+      url.searchParams.set("k", STORAGE_KEY);
+      try { await navigator.clipboard.writeText(url.toString()); showToast("Link copiado."); }
+      catch { showToast("No se pudo copiar (permiso navegador)."); }
+    });
+
+    el.btnEvidence.addEventListener("click", () => {
+      // baja a la tarjeta de capas
+      const card = document.getElementById("layersList")?.closest(".card");
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    el.btnTech.addEventListener("click", () => {
+      const hidden = el.techBox.classList.contains("tech--hidden");
+      el.techBox.classList.toggle("tech--hidden", !hidden);
+      el.btnTech.textContent = hidden ? "Ocultar detalles" : "Detalles técnicos";
+    });
+
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") toggleMenu(false); });
+  }
+
+  function boot() {
+    payload = loadPayload() || buildFallbackPayload();
+
+    const click = normalizeClick(payload.click);
+    initMap(click);
+
+    renderTopKPIs();
+    renderLayers();
+
+    // seleccionar capa inicial
+    const layers = Array.isArray(payload.layers) ? payload.layers : [];
+    const best = layers.find(l => hasGeoJSON(l.polygon)) || layers[0];
+    if (best) selectLayer(best.__id, { zoom: false });
+
+    // Leaflet dentro de recuadro: asegurar tamaño correcto
+    setTimeout(() => { if (map) map.invalidateSize(true); fitToContext(); }, 180);
+
+    wireEvents();
+    showToast(loadPayload() ? "Resultado cargado." : "Sin datos: mostrando ejemplo (Santiago).");
+  }
+
+  window.addEventListener("load", boot);
 })();

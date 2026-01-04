@@ -2,63 +2,125 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>GeoNEMO - MapaOut</title>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <link rel="stylesheet" href="css/mapaout.css" />
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <link rel="stylesheet" href="./css/mapaout.css" />
+  <script defer src="./js/mapaout.js"></script>
 </head>
+
 <body>
-  <header class="bar">
+  <header class="topbar">
     <div class="brand">
-      <div class="logo">🧾</div>
-      <div class="title">
-        <h1>GeoNEMO · MapaOut</h1>
-        <div class="sub">Polígono vinculado por capa (inside o proximidad) + punto consultado</div>
+      <div class="brand__dot"></div>
+      <div class="brand__txt">
+        <div class="brand__title">GeoNEMO · MapaOut</div>
+        <div class="brand__sub">Salida de análisis: punto consultado + vinculación por capas</div>
       </div>
     </div>
-    <div class="actions">
-      <button id="btnBack" class="btn" title="Volver al mapa">← Volver</button>
-      <button id="btnDownloadJson" class="btn" title="Descargar JSON del resultado">⬇ JSON</button>
-      <button id="btnClearOut" class="btn" title="Borrar resultado guardado">🗑</button>
+
+    <div class="topbar__right">
+      <button id="btnBack" class="btn btn--ghost" type="button">← Volver</button>
+
+      <div class="dropdown">
+        <button id="btnDownloads" class="btn btn--primary" type="button">⬇ Descargas</button>
+        <div id="downloadsMenu" class="dropdown__menu" aria-hidden="true">
+          <button id="btnDownloadJSON" class="menuitem" type="button">JSON (resultado)</button>
+          <button id="btnDownloadSelectedGeoJSON" class="menuitem" type="button" disabled>GeoJSON (polígono seleccionado)</button>
+          <button id="btnCopyLink" class="menuitem" type="button">Copiar link</button>
+        </div>
+      </div>
     </div>
   </header>
 
-  <main class="wrap">
-    <section class="row">
-      <div class="mapcard">
-        <div class="maptitle">Mapa de salida</div>
-        <div id="outMap" class="outmap" aria-label="MapaOut"></div>
-      </div>
+  <main class="shell">
+    <!-- fila superior: mapa + dictamen -->
+    <section class="gridTop">
+      <div class="card mapCard" aria-label="Mapa">
+        <div class="cardHead">
+          <div class="cardTitle">Mapa</div>
+          <div class="cardHead__right">
+            <button id="btnFit" class="btn btn--ghost btnSm" type="button" title="Ajustar vista">⤢ Ajustar</button>
+          </div>
+        </div>
 
-      <div class="card">
-        <h2>Resumen</h2>
-        <div class="grid">
-          <div class="kv"><div class="k">Actualizado</div><div class="v" id="outUpdated">—</div></div>
-          <div class="kv"><div class="k">Clic</div><div class="v" id="outClick">—</div></div>
-          <div class="kv"><div class="k">BBOX</div><div class="v mono" id="outBbox">—</div></div>
-          <div class="kv"><div class="k">Áreas en BBOX</div><div class="v" id="st1">—</div></div>
-          <div class="kv"><div class="k">Total en BBOX</div><div class="v" id="st2">—</div></div>
-          <div class="kv"><div class="k">Sup. protegida</div><div class="v" id="st3">—</div></div>
+        <div class="mapFrame">
+          <div id="map"></div>
+
+          <div class="legend">
+            <div class="legend__title">Leyenda</div>
+            <div class="legend__row"><span class="swatch swatch--point"></span> Punto consultado</div>
+            <div class="legend__row"><span class="swatch swatch--poly"></span> Polígono seleccionado</div>
+          </div>
+
+          <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
         </div>
       </div>
-    </section>
 
-    <section class="card">
-      <h2>Vinculación por capas</h2>
-      <div id="links" class="links"></div>
-    </section>
+      <div class="card sideCard" aria-label="Resumen">
+        <div class="cardHead">
+          <div class="cardTitle">Dictamen</div>
+        </div>
 
-    <section class="card">
-      <h2>Atributos del polígono seleccionado (capa activa)</h2>
-      <div class="muted" style="margin:-4px 0 10px 0;">Haz clic en una capa en la tabla anterior para ver sus atributos.</div>
-      <div id="attrs" class="attrs">
-        <div class="muted">Sin selección.</div>
+        <div class="kpiGrid">
+          <div class="kpi">
+            <div class="kpi__label">Estado</div>
+            <div id="kpiStatus" class="badge badge--neutral">—</div>
+          </div>
+
+          <div class="kpi">
+            <div class="kpi__label">Distancia mínima</div>
+            <div id="kpiDist" class="kpi__value">—</div>
+          </div>
+
+          <div class="kpi kpiFull">
+            <div class="kpi__label">Capa dominante</div>
+            <div id="kpiLayer" class="kpi__value">—</div>
+          </div>
+
+          <div class="rowBtns kpiFull">
+            <button id="btnEvidence" class="btn btn--primary" type="button">Ver evidencia</button>
+            <button id="btnTech" class="btn btn--ghost" type="button">Detalles técnicos</button>
+          </div>
+
+          <div id="techBox" class="tech tech--hidden kpiFull">
+            <div class="tech__grid">
+              <div><div class="tech__k">Actualizado</div><div id="techUpdated" class="tech__v">—</div></div>
+              <div><div class="tech__k">Clic</div><div id="techClick" class="tech__v">—</div></div>
+              <div><div class="tech__k">BBOX</div><div id="techBbox" class="tech__v">—</div></div>
+              <div><div class="tech__k">Key localStorage</div><div class="tech__v"><code>geonemo_out_v2</code></div></div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </section>
-  </main>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="js/mapaout.js"></script>
+    <!-- tabla capas -->
+    <section class="card" aria-label="Vinculación por capas">
+      <div class="cardHead">
+        <div class="cardTitle">Vinculación por capas</div>
+        <div id="layersCount" class="pill">0</div>
+      </div>
+      <div id="layersList" class="layers"></div>
+    </section>
+
+    <!-- atributos -->
+    <section class="card" aria-label="Atributos">
+      <div class="cardHead">
+        <div class="cardTitle">Atributos del polígono seleccionado</div>
+        <div id="attrsHint" class="muted">Selecciona una capa para ver atributos.</div>
+      </div>
+      <div id="attrsBox" class="attrs"><div class="muted">Sin selección.</div></div>
+    </section>
+
+    <div class="footerNote muted">
+      * Resultado preliminar de apoyo. No reemplaza pronunciamientos oficiales ni evaluaciones ambientales.
+    </div>
+  </main>
 </body>
 </html>
