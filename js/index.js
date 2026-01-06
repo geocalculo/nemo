@@ -1,32 +1,52 @@
 /************************************************************
  * GeoNEMO - index.js (WGS84 + Vinculación por capa)
  * - Basemap: OpenTopoMap 100% + Satélite (Esri) 25% encima
- * - Capas (config): cada capa devuelve 1 polígono vinculado al punto:
- *    a) Si el punto está dentro -> vinculación por "inside"
- *    b) Si no está dentro -> vinculación por proximidad al perímetro
- * - Click: guarda resultado completo y abre MapaOut.html siempre
+ * - Click: calcula 1 polígono ganador por capa:
+ *    a) inside (punto dentro) => feature ganador
+ *    b) si no => nearest_perimeter (más cercano al perímetro) => feature ganador
+ * - Guarda en localStorage (geonemo_out_v2) y abre mapaout.html SIEMPRE
+ *
+ * IMPORTANTE:
+ * - Requiere Turf.js disponible como "turf" (global).
  ************************************************************/
 
 const REGIONES_URL = "data/regiones.json";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
 const REGION_ZOOM_50K = 14;
 
-// ✅ Configura aquí tus capas (puedes sumar más)
-const LAYERS = [
-  {
-    id: "snaspe_mn",
-    name: "SNASPE · Monumento Natural",
-    url: "capas/SNASPE_Monumento_Natural.geojson",
-  }
-];
-
 const OUT_STORAGE_KEY = "geonemo_out_v2";
 
+/**
+ * Estructura de capas (segmentación por peso / bbox):
+ * - SNASPE: Norte / Sur, Tipo 1 / Tipo 2
+ * - RAMSAR: Norte, Tipo 1 / Tipo 2
+ *
+ * Ajusta urls a tu carpeta /capas/
+ */
+const LAYERS = [
+  // ========= SNASPE =========
+  { id: "snaspe_norte_t1", name: "SNASPE Norte · Tipo 1", url: "capas/SNASPE_Norte_Tipo1.geojson", enabled: false },
+  { id: "snaspe_norte_t2", name: "SNASPE Norte · Tipo 2", url: "capas/SNASPE_Norte_Tipo2.geojson", enabled: false },
+  { id: "snaspe_sur_t1",   name: "SNASPE Sur · Tipo 1",   url: "capas/SNASPE_Sur_Tipo1.geojson",   enabled: false },
+  { id: "snaspe_sur_t2",   name: "SNASPE Sur · Tipo 2",   url: "capas/SNASPE_Sur_Tipo2.geojson",   enabled: false },
+
+  // Ejemplo actual (tu archivo subido)
+  { id: "snaspe_mn", name: "SNASPE · Monumento Natural", url: "capas/SNASPE_Monumento_Natural.geojson", enabled: true },
+
+  // ========= RAMSAR =========
+  { id: "ramsar_norte_t1", name: "RAMSAR Norte · Tipo 1", url: "capas/RAMSAR_Norte_Tipo1.geojson", enabled: false },
+  { id: "ramsar_norte_t2", name: "RAMSAR Norte · Tipo 2", url: "capas/RAMSAR_Norte_Tipo2.geojson", enabled: false },
+];
+
+// ====== mapa global ======
 let map;
 let userMarker = null;
 let clickMarker = null;
 
-// Índices por capa: layerId -> { loaded, featuresIndex[] }
+/**
+ * Índice por capa en memoria:
+ * layerId -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
+ */
 const layerState = new Map();
 
 /* ===========================
@@ -53,6 +73,8 @@ function fmtArea(m2){
   return `${ha.toLocaleString("es-CL", { maximumFractionDigits: 1 })} ha`;
 }
 
+function nowIso(){ return new Date().toISOString(); }
+
 function bboxIntersects(b1, b2){
   // [minLon,minLat,maxLon,maxLat]
   return !(b2[0] > b1[2] || b2[2] < b1[0] || b2[1] > b1[3] || b2[3] < b1[1]);
@@ -62,7 +84,27 @@ function bboxContainsLonLat(bb, lon, lat) {
   return lon >= bb[0] && lon <= bb[2] && lat >= bb[1] && lat <= bb[3];
 }
 
-function nowIso(){ return new Date().toISOString(); }
+/* ===========================
+   Validación Turf (CRÍTICO)
+=========================== */
+function assertTurfReady() {
+  const ok =
+    typeof window.turf !== "undefined" &&
+    turf &&
+    typeof turf.bbox === "function" &&
+    typeof turf.area === "function" &&
+    typeof turf.booleanPointInPolygon === "function" &&
+    typeof turf.polygonToLine === "function" &&
+    typeof turf.pointToLineDistance === "function" &&
+    typeof turf.bboxPolygon === "function" &&
+    typeof turf.booleanIntersects === "function";
+
+  if (!ok) {
+    console.error("[GeoNEMO] Turf.js no está cargado o faltan funciones. Revisa index.html (script turf).");
+    toast("⚠️ Falta Turf.js (no puedo calcular inside/nearest). Revisa index.html.", 3800);
+  }
+  return ok;
+}
 
 /* ===========================
    localStorage out
@@ -71,6 +113,7 @@ function saveOut(payload){
   try{ localStorage.setItem(OUT_STORAGE_KEY, JSON.stringify(payload)); }
   catch(e){ console.warn("No pude guardar salida", e); }
 }
+
 function loadOut(){
   try{
     const raw = localStorage.getItem(OUT_STORAGE_KEY);
@@ -78,6 +121,7 @@ function loadOut(){
     return JSON.parse(raw);
   } catch(e){ return null; }
 }
+
 function openOut(){
   window.open("mapaout.html", "_blank", "noopener");
 }
@@ -89,7 +133,6 @@ function crearMapa() {
   map = L.map("map", { zoomControl: true, preferCanvas: true })
     .setView(HOME_VIEW.center, HOME_VIEW.zoom);
 
-  // Base GeoNEMO: Topo 100% + Satélite 25%
   const topoBase = L.tileLayer(
     "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
     {
@@ -143,7 +186,6 @@ async function cargarRegiones() {
     return;
   }
 
-  const zoom = REGION_ZOOM_50K; // fuerza ~1:50.000
   const regiones = Array.isArray(data) ? data : (data.regiones || []);
   for (const r of regiones) {
     const opt = document.createElement("option");
@@ -171,11 +213,16 @@ async function cargarRegiones() {
 }
 
 /* ===========================
-   Load GeoJSON por capa
+   Load GeoJSON por capa + index bbox/area
 =========================== */
 async function ensureLayerLoaded(layer){
   const st = layerState.get(layer.id) || { loaded:false, featuresIndex:[] };
   if (st.loaded) return st;
+
+  if (!assertTurfReady()) {
+    // no cargamos capas si falta turf (porque bbox/area depende)
+    return st;
+  }
 
   const res = await fetch(layer.url, { cache:"no-store" });
   if (!res.ok) throw new Error(`No se pudo cargar ${layer.url} (HTTP ${res.status})`);
@@ -200,13 +247,12 @@ async function ensureLayerLoaded(layer){
   st.featuresIndex = idx;
   layerState.set(layer.id, st);
 
-  toast(`✅ Cargada: ${layer.name} (${idx.length})`, 1800);
+  toast(`✅ Cargada: ${layer.name} (${idx.length})`, 1600);
   return st;
 }
 
 /* ===========================
-   Resumen BBOX (por ahora solo 1 capa: la primera)
-   Luego puedes cambiar a sumar capas.
+   Resumen BBOX (usa primera capa enabled como resumen)
 =========================== */
 const elStProtected = document.getElementById("stProtected");
 const elStTotal     = document.getElementById("stTotal");
@@ -230,9 +276,12 @@ function scheduleStatsUpdate(){
 
 async function updateBboxStats(){
   if (!map) return;
+  if (!assertTurfReady()) {
+    setStatsUI("—","—","—");
+    return;
+  }
 
-  // Tomamos la primera capa como "resumen" (ajustable)
-  const layer = LAYERS[0];
+  const layer = LAYERS.find(l => l.enabled) || LAYERS[0];
   if (!layer) return;
 
   let st;
@@ -272,7 +321,6 @@ async function updateBboxStats(){
 
   setStatsUI(fmtInt(protectedAreas), fmtInt(totalAreas), fmtArea(protectedAreaM2));
 
-  // Guardar estado de bbox/stats (para mapaout)
   const prev = loadOut() || {};
   saveOut({
     ...prev,
@@ -293,9 +341,6 @@ async function updateBboxStats(){
    - else => nearest perimeter
 =========================== */
 function distToPerimeterKm(feature, pt){
-  // pt: turf.point([lon,lat])
-  // Convierte polígono a línea(s) del perímetro y mide distancia mínima
-  // pointToLineDistance en km por defecto (units: 'kilometers')
   try{
     const line = turf.polygonToLine(feature);
     const d = turf.pointToLineDistance(pt, line, { units:"kilometers" });
@@ -305,11 +350,26 @@ function distToPerimeterKm(feature, pt){
   }
 }
 
+/**
+ * Devuelve SIEMPRE 1 feature ganador si hay features en la capa
+ * (inside si existe, si no nearest_perimeter).
+ */
 async function linkOneLayerToPoint(layer, pt, lon, lat){
   const st = await ensureLayerLoaded(layer);
-  const idx = st.featuresIndex;
+  const idx = st.featuresIndex || [];
 
-  // 1) Intentar inside con prefiltrado por bbox
+  // Si no hay features (o turf no cargó), retorna none
+  if (!idx.length) {
+    return {
+      layer_id: layer.id,
+      layer_name: layer.name,
+      link_type: "none",
+      distance_km: null,
+      feature: null
+    };
+  }
+
+  // 1) inside con prefiltrado bbox
   let insideFeat = null;
   for (const it of idx){
     if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
@@ -317,9 +377,10 @@ async function linkOneLayerToPoint(layer, pt, lon, lat){
     try{ inside = turf.booleanPointInPolygon(pt, it.feature); } catch(_) {}
     if (inside){
       insideFeat = it.feature;
-      break; // 1 polígono por capa
+      break;
     }
   }
+
   if (insideFeat){
     return {
       layer_id: layer.id,
@@ -334,32 +395,32 @@ async function linkOneLayerToPoint(layer, pt, lon, lat){
     };
   }
 
-  // 2) Si no está dentro, buscar nearest perimeter (optimizado por bbox expandida)
-  let best = { d: Infinity, feature: null };
+  // 2) nearest perimeter (siempre debería elegir 1)
+  let bestD = Infinity;
+  let bestFeat = null;
 
   for (const it of idx){
-    // poda por bbox expandida por mejor distancia (grados ~ km: aproximación muy suave)
-    if (isFinite(best.d)){
-      const padDeg = best.d / 111.0; // ~111 km por grado
-      const bb = it.bbox;
-      if (lon < bb[0]-padDeg || lon > bb[2]+padDeg || lat < bb[1]-padDeg || lat > bb[3]+padDeg) continue;
-    }
-
     const d = distToPerimeterKm(it.feature, pt);
-    if (d < best.d){
-      best = { d, feature: it.feature };
+    if (d < bestD){
+      bestD = d;
+      bestFeat = it.feature;
     }
   }
+
+  // Si por alguna razón todos dieron Infinity, igual elige el primero (fallback real)
+  if (!bestFeat) bestFeat = idx[0].feature;
+
+  const outD = isFinite(bestD) ? bestD : null;
 
   return {
     layer_id: layer.id,
     layer_name: layer.name,
-    link_type: best.feature ? "nearest_perimeter" : "none",
-    distance_km: isFinite(best.d) ? best.d : null,
-    feature: best.feature ? {
+    link_type: "nearest_perimeter",
+    distance_km: outD,
+    feature: bestFeat ? {
       type: "Feature",
-      properties: best.feature.properties || {},
-      geometry: best.feature.geometry
+      properties: bestFeat.properties || {},
+      geometry: bestFeat.geometry
     } : null
   };
 }
@@ -368,21 +429,24 @@ async function linkOneLayerToPoint(layer, pt, lon, lat){
    Click: siempre abre MapaOut.html
 =========================== */
 async function onMapClick(e){
+  if (!assertTurfReady()) return;
+
   const lat = e.latlng.lat;
-  const lon = e.latlng.lng;
+  const lng = e.latlng.lng; // 👈 normalizado a lng
 
   if (clickMarker) map.removeLayer(clickMarker);
-  clickMarker = L.circleMarker([lat, lon], {
+  clickMarker = L.circleMarker([lat, lng], {
     radius: 7, weight: 2, opacity: 1, fillOpacity: 0.25
   }).addTo(map);
 
-  const pt = turf.point([lon, lat]);
+  const pt = turf.point([lng, lat]);
 
-  // Vincular 1 polígono por capa
+  const activeLayers = LAYERS.filter(l => l.enabled !== false);
   const links = [];
-  for (const layer of LAYERS){
+
+  for (const layer of activeLayers){
     try{
-      const link = await linkOneLayerToPoint(layer, pt, lon, lat);
+      const link = await linkOneLayerToPoint(layer, pt, lng, lat);
       links.push(link);
     } catch(e2){
       console.warn("Error vinculando capa", layer, e2);
@@ -396,21 +460,22 @@ async function onMapClick(e){
     }
   }
 
-  // Mensaje breve
   const insideCount = links.filter(x => x.link_type === "inside").length;
-  toast(insideCount ? `✅ Dentro en ${insideCount} capa(s)` : "📍 Vinculación por proximidad al perímetro", 1800);
+  toast(insideCount ? `✅ Dentro en ${insideCount} capa(s)` : "📍 Vinculación por proximidad al perímetro", 1600);
 
-  // Guardar salida
   const prev = loadOut() || {};
   saveOut({
     ...prev,
     created_at: prev.created_at || nowIso(),
     updated_at: nowIso(),
-    click: { lat, lon },
+
+    // 👇 click normalizado
+    click: { lat, lng },
+
+    // links por capa (cada uno con 1 feature ganador o null)
     links
   });
 
-  // Abrir salida SIEMPRE
   openOut();
 }
 
@@ -454,14 +519,14 @@ function bindUI() {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
+          const lng = pos.coords.longitude;
 
           if (userMarker) map.removeLayer(userMarker);
-          userMarker = L.circleMarker([lat, lon], {
+          userMarker = L.circleMarker([lat, lng], {
             radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
           }).addTo(map);
 
-          map.setView([lat, lon], Math.max(map.getZoom(), 14), { animate: true });
+          map.setView([lat, lng], Math.max(map.getZoom(), 14), { animate: true });
           toast("🎯 Ubicación detectada", 1400);
           setTimeout(() => map.invalidateSize(true), 150);
           scheduleStatsUpdate();
@@ -477,7 +542,8 @@ function bindUI() {
   if (btnPreload) {
     btnPreload.addEventListener("click", async () => {
       try {
-        for (const layer of LAYERS) await ensureLayerLoaded(layer);
+        const activeLayers = LAYERS.filter(l => l.enabled !== false);
+        for (const layer of activeLayers) await ensureLayerLoaded(layer);
         toast("⬇️ Capas precargadas", 1400);
         scheduleStatsUpdate();
       } catch (err) {
@@ -496,9 +562,9 @@ function bindUI() {
   bindUI();
   await cargarRegiones();
 
-  // precarga “silenciosa”
-  ensureLayerLoaded(LAYERS[0]).catch(() => {});
+  // precarga “silenciosa” de la primera enabled
+  const first = LAYERS.find(l => l.enabled) || LAYERS[0];
+  if (first) ensureLayerLoaded(first).catch(() => {});
 
   toast("Listo ✅ Clic para vincular 1 polígono por capa y abrir MapaOut.", 2600);
 })();
-
