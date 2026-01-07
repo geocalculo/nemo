@@ -6,6 +6,9 @@
   // ==========================
   const STORAGE_KEY = "geonemo_out_v2";
 
+  // ✅ Preferencias de mapa heredadas desde index
+  const MAP_PREF_KEY = "geonemo_map_pref";
+
   // ==========================
   // DOM REFS
   // ==========================
@@ -106,17 +109,23 @@
   }
 
   // ==========================
+  // MAP PREFS
+  // ==========================
+  function readMapPref(){
+    try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
+    catch { return {}; }
+  }
+
+  // ==========================
   // GEO HELPERS
   // ==========================
   function normalizeClick(click) {
     if (!click) return null;
 
-    // array [lat,lng] or [lng,lat] (we’ll detect loosely)
+    // array [lat,lng] or [lng,lat]
     if (Array.isArray(click) && click.length >= 2) {
       const a = Number(click[0]);
       const b = Number(click[1]);
-      // If first looks like lon and second like lat, swap
-      // lon in [-180,180], lat in [-90,90]
       const looksLikeLonLat = Math.abs(a) <= 180 && Math.abs(b) <= 90;
       const looksLikeLatLon = Math.abs(a) <= 90 && Math.abs(b) <= 180;
       if (looksLikeLonLat && !looksLikeLatLon) return { lat: b, lng: a };
@@ -225,27 +234,22 @@
   function normalizePayload(raw) {
     if (!raw || typeof raw !== "object") return null;
 
-    // If already normalized, just patch minor differences
     const out = { ...raw };
 
-    // updatedAt
     out.updatedAt = out.updatedAt || out.updated_at || new Date().toISOString();
 
-    // click: lon -> lng
     if (out.click && typeof out.click === "object") {
       if (out.click.lng === undefined && out.click.lon !== undefined) {
         out.click = { ...out.click, lng: out.click.lon };
       }
     }
 
-    // bbox: object {west,south,east,north} -> [w,s,e,n]
     if (out.bbox && typeof out.bbox === "object" && !Array.isArray(out.bbox)) {
       const w = Number(out.bbox.west), s = Number(out.bbox.south),
             e = Number(out.bbox.east), n = Number(out.bbox.north);
       if ([w, s, e, n].every(Number.isFinite)) out.bbox = [w, s, e, n];
     }
 
-    // links[] -> layers[]
     if (!Array.isArray(out.layers) && Array.isArray(out.links)) {
       out.layers = out.links.map((link, i) => {
         const status = canonicalStatusFromLinkType(link.link_type || link.status);
@@ -265,7 +269,6 @@
 
       if (!out.summary) out.summary = generateSummaryFromLinks(out.links);
     } else if (!out.summary && Array.isArray(out.layers)) {
-      // Create a minimal summary if layers exist but no summary
       const best = [...out.layers].sort((a, b) => {
         const ra = (a.status === "inside") ? 3 : (a.status === "prox") ? 2 : (a.status === "out") ? 1 : 0;
         const rb = (b.status === "inside") ? 3 : (b.status === "prox") ? 2 : (b.status === "out") ? 1 : 0;
@@ -297,10 +300,39 @@
 
     map = L.map("map", { zoomControl: true, attributionControl: true });
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19, attribution: "&copy; OpenStreetMap"
-    }).addTo(map);
+    // ✅ Basemap igual a index (OpenTopoMap)
+    const topoBase = L.tileLayer(
+      "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+      {
+        maxZoom: 17,
+        subdomains: "abc",
+        opacity: 1.0,
+        attribution: "Map data: &copy; OpenStreetMap contributors, SRTM | OpenTopoMap",
+        crossOrigin: true,
+        updateWhenIdle: true
+      }
+    );
 
+    // ✅ Overlay igual a index (Esri Satélite 25%)
+    const satOverlay = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 19,
+        opacity: 0.25,
+        attribution: "Tiles &copy; Esri",
+        crossOrigin: true,
+        updateWhenIdle: true
+      }
+    );
+
+    const pref = readMapPref();
+    topoBase.addTo(map);
+
+    // Por defecto lo dejamos ON (igual que index), salvo que venga explícitamente apagado
+    const wantSat = (pref.overlay === "Esri Satélite") || (pref.overlay == null);
+    if (wantSat) satOverlay.addTo(map);
+
+    // Capa polígono resultado
     polyLayer = L.geoJSON(null, {
       style: () => ({
         color: "#38bdf8",
@@ -310,7 +342,7 @@
       }),
     }).addTo(map);
 
-    const latlng = click ? [click.lat, click.lng] : [-24.5, -70.55]; // fallback neutral norte (no Santiago)
+    const latlng = click ? [click.lat, click.lng] : [-24.5, -70.55];
     pointMarker = L.circleMarker(latlng, {
       radius: 8,
       weight: 2,
@@ -394,13 +426,11 @@
     const hasPoly = hasGeoJSON(layer.polygon);
     if (el.btnDownloadSelectedGeoJSON) el.btnDownloadSelectedGeoJSON.disabled = !hasPoly;
 
-    // attributes
     let props = null;
     if (layer.polygon && layer.polygon.type === "Feature" && layer.polygon.properties) props = layer.polygon.properties;
     else props = layer.properties || null;
     renderAttrs(props);
 
-    // map polygon
     if (hasPoly) {
       setPolygonOnMap(layer.polygon);
       if (opts.zoom) fitToContext();
@@ -411,7 +441,6 @@
       showToast("Sin polígono asociado (sin match).");
     }
 
-    // KPIs from selected layer
     if (el.kpiLayer) el.kpiLayer.textContent = safeText(layer.name || "—");
     const dist = (layer.distanceM !== null && layer.distanceM !== undefined)
       ? layer.distanceM
@@ -453,7 +482,6 @@
       el.kpiStatus.textContent = b.label;
     }
 
-    // distance
     let minD = summary.minDistanceM;
     if (minD === null || minD === undefined) {
       const ds = layers.map(l => l?.distanceM).filter(v => v !== null && v !== undefined && Number.isFinite(Number(v)));
@@ -462,7 +490,6 @@
     if (el.kpiDist) el.kpiDist.textContent = fmtDist(minD);
     if (el.kpiLayer) el.kpiLayer.textContent = dominantLayer ? safeText(dominantLayer) : "—";
 
-    // tech
     if (el.techUpdated) el.techUpdated.textContent = safeText(payload.updatedAt || "—");
     const click = normalizeClick(payload.click);
     if (el.techClick) el.techClick.textContent = click ? `${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}` : "—";
@@ -490,7 +517,6 @@
     }
 
     layers.forEach((layer, idx) => {
-      // stable id
       const id = safeText(layer.id || layer.name || `layer_${idx}`);
       layer.__id = id;
 
@@ -625,18 +651,15 @@
     renderTopKPIs();
     renderLayers();
 
-    // ✅ Selección inicial: siempre escoger el primero con polígono, si existe
     const layers = Array.isArray(payload.layers) ? payload.layers : [];
     const best = layers.find(l => hasGeoJSON(l.polygon)) || layers[0];
 
     if (best && best.__id) {
       selectLayer(best.__id, { zoom: false });
     } else if (best && best.id) {
-      // por si __id aún no existe por algún motivo
       selectLayer(String(best.id), { zoom: false });
     }
 
-    // Leaflet en recuadro
     setTimeout(() => {
       if (map) map.invalidateSize(true);
       fitToContext();

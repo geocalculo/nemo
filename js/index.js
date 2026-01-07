@@ -11,6 +11,10 @@
  * - Distancia al perímetro en METROS (distance_m)
  * - Guarda en localStorage (geonemo_out_v2) y abre mapaout.html SIEMPRE
  *
+ * + NUEVO:
+ * - Guarda preferencia de mapabase/overlay en localStorage
+ *   para que mapaout.html herede la misma configuración.
+ *
  * IMPORTANTE:
  * - Requiere Leaflet (L) y Turf.js global (turf).
  ************************************************************/
@@ -19,6 +23,9 @@ const REGIONES_URL = "data/regiones.json";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
 
 const OUT_STORAGE_KEY = "geonemo_out_v2";
+
+// ✅ Preferencias de mapa (herencia hacia mapaout)
+const MAP_PREF_KEY = "geonemo_map_pref";
 
 // ✅ Ruta pedida por ti:
 const GROUP_DEFS = [
@@ -29,6 +36,10 @@ const GROUP_DEFS = [
 let map;
 let userMarker = null;
 let clickMarker = null;
+
+// Guardamos referencias a tiles para persistir estado
+let topoBase = null;
+let satOverlay = null;
 
 /**
  * Índice por archivo GeoJSON en memoria:
@@ -114,15 +125,39 @@ function openOut(){
 }
 
 /* ===========================
+   Preferencias mapa (basemap/overlay)
+=========================== */
+function readMapPref(){
+  try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
+  catch { return {}; }
+}
+
+function writeMapPref(pref){
+  try { localStorage.setItem(MAP_PREF_KEY, JSON.stringify(pref || {})); }
+  catch {}
+}
+
+function syncMapPrefFromCurrentLayers(){
+  if (!map || !satOverlay) return;
+  const hasSat = map.hasLayer(satOverlay);
+  writeMapPref({
+    base: "OpenTopoMap",
+    overlay: hasSat ? "Esri Satélite" : null,
+    overlayOpacity: 0.25
+  });
+}
+
+/* ===========================
    Map init
 =========================== */
 function crearMapa() {
   map = L.map("map", { zoomControl: true, preferCanvas: true })
     .setView(HOME_VIEW.center, HOME_VIEW.zoom);
 
-  const topoBase = L.tileLayer(
+  topoBase = L.tileLayer(
     "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
     {
+      name: "OpenTopoMap",
       maxZoom: 17,
       subdomains: "abc",
       opacity: 1.0,
@@ -132,9 +167,10 @@ function crearMapa() {
     }
   );
 
-  const satOverlay = L.tileLayer(
+  satOverlay = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
+      name: "Esri Satélite",
       maxZoom: 19,
       opacity: 0.25,
       attribution: "Tiles &copy; Esri",
@@ -143,8 +179,20 @@ function crearMapa() {
     }
   );
 
+  // ✅ Restaurar preferencia (si existe)
+  const pref = readMapPref();
+
   topoBase.addTo(map);
-  satOverlay.addTo(map);
+  // Por defecto en tu diseño: overlay encendido
+  const wantSat = (pref.overlay === "Esri Satélite") || (pref.overlay == null);
+  if (wantSat) satOverlay.addTo(map);
+
+  // ✅ Persistir cambios (si en el futuro agregas toggle)
+  map.on("layeradd", syncMapPrefFromCurrentLayers);
+  map.on("layerremove", syncMapPrefFromCurrentLayers);
+
+  // Al iniciar, guarda estado real
+  syncMapPrefFromCurrentLayers();
 
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
@@ -222,11 +270,6 @@ function joinPath(baseDir, rel){
 
 /**
  * Resuelve rutas de "files" respecto al folder del JSON de grupo.
- * Ej:
- *  groupUrl = "capas/grupo_snaspe.json" => baseDir "capas/"
- *  file "capas_snaspe/xxx.geojson" => "capas/capas_snaspe/xxx.geojson"
- *
- * Si el file ya viene con "/" al inicio o http(s), se usa tal cual.
  */
 function resolveGroupFileUrl(groupUrl, filePath){
   const f = String(filePath || "");
@@ -247,7 +290,6 @@ async function loadGroupDefinition(def){
   const filesRaw = Array.isArray(gj.files) ? gj.files : [];
   const files = filesRaw
     .map(f => resolveGroupFileUrl(def.url, f))
-    // opcional: filtrar solo geojson
     .filter(u => /\.geojson$/i.test(u));
 
   return {
@@ -290,7 +332,6 @@ async function ensureFileLoaded(fileUrl){
   st.featuresIndex = idx;
   fileState.set(fileUrl, st);
 
-  // Toast suave (sin ensuciar mucho)
   toast(`✅ Cargado: ${fileUrl.split("/").pop()} (${idx.length})`, 1200);
   return st;
 }
@@ -327,7 +368,6 @@ async function updateBboxStats(){
   const g = GROUPS.find(x => x.enabled) || GROUPS[0];
   if (!g || !g.files?.length) { setStatsUI("—","—","—"); return; }
 
-  // Tomamos TODOS los archivos del grupo para stats (más fiel a “grupo”)
   const b = map.getBounds();
   const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   const bboxPoly = turf.bboxPolygon(bbox);
@@ -379,19 +419,14 @@ async function updateBboxStats(){
 
 /* ===========================
    Vinculación por GRUPO:
-   - inside => ok (ganador inmediato)
-   - else => nearest perimeter (mínimo en todo el grupo)
-   Distancia al perímetro en METROS.
 =========================== */
 function distToPerimeterM(feature, pt){
   try{
     const line = turf.polygonToLine(feature);
-    // ✅ en metros (si tu versión de turf no soporta "meters", usa "kilometers"*1000)
     let d = turf.pointToLineDistance(pt, line, { units:"meters" });
     if (!isFinite(d)) return Infinity;
     return d;
   } catch(e){
-    // fallback por compatibilidad
     try{
       const line = turf.polygonToLine(feature);
       const km = turf.pointToLineDistance(pt, line, { units:"kilometers" });
@@ -402,11 +437,6 @@ function distToPerimeterM(feature, pt){
   }
 }
 
-/**
- * Devuelve 1 ganador por grupo:
- * - inside (si existe) o
- * - nearest_perimeter (mínimo global)
- */
 async function linkOneGroupToPoint(group, pt, lon, lat){
   const files = group.files || [];
   if (!files.length) {
@@ -420,7 +450,7 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
     };
   }
 
-  // 1) inside: recorrer archivos + bbox prefilter
+  // 1) inside
   for (const fileUrl of files){
     const st = await ensureFileLoaded(fileUrl);
     const idx = st.featuresIndex || [];
@@ -448,7 +478,7 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
     }
   }
 
-  // 2) nearest perimeter: mínimo entre TODOS los polígonos de TODOS los archivos
+  // 2) nearest perimeter
   let bestD = Infinity;
   let bestFeat = null;
   let bestFile = null;
@@ -534,12 +564,10 @@ async function onMapClick(e){
 
   const prev = loadOut() || {};
 
-  // ✅ Compatibilidad: además de "groups", dejamos "links" estilo antiguo
   const legacyLinks = results.map(r => ({
     layer_id: r.group_id,
     layer_name: r.group_name,
     link_type: r.link_type,
-    // antes era km; ahora guardamos metros y dejamos km calculado si lo necesitas
     distance_km: isFinite(r.distance_m) ? (r.distance_m / 1000) : null,
     distance_m: r.distance_m ?? null,
     source_file: r.source_file ?? null,
@@ -552,10 +580,7 @@ async function onMapClick(e){
     updated_at: nowIso(),
     click: { lat, lng },
 
-    // ✅ nuevo formato por grupo
     groups: results,
-
-    // ✅ legacy para que mapaout viejo no se rompa
     links: legacyLinks
   });
 
@@ -668,7 +693,6 @@ function bindUI() {
     GROUPS = [];
   }
 
-  // precarga silenciosa del primer archivo del primer grupo
   const firstGroup = GROUPS.find(g => g.enabled) || GROUPS[0];
   const firstFile = firstGroup?.files?.[0];
   if (firstFile) ensureFileLoaded(firstFile).catch(() => {});

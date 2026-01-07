@@ -2,6 +2,7 @@
   "group": "SNASPE",
   "files": [
     "capas_snaspe/SNASPE_Monumento_Natural.geojson",
+    "capas_snaspe/SNASPE_Parque_Nacional.geojson",
     "capas_snaspe/SNASPE_Reserva_Nacional.geojson"
   ]
 }
