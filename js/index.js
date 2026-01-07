@@ -1,41 +1,28 @@
 /************************************************************
- * GeoNEMO - index.js (WGS84 + Vinculación por capa)
- * - Basemap: OpenTopoMap 100% + Satélite (Esri) 25% encima
- * - Click: calcula 1 polígono ganador por capa:
- *    a) inside (punto dentro) => feature ganador
- *    b) si no => nearest_perimeter (más cercano al perímetro) => feature ganador
+ * GeoNEMO - index.js (WGS84 + Vinculación por GRUPO)
+ *
+ * - Carga grupos desde:
+ *    /capas/grupo_snaspe.json
+ * - Cada grupo tiene "files": lista de GeoJSON (subcapas).
+ * - Click:
+ *    Para cada GRUPO => 1 único polígono ganador:
+ *      a) inside (punto dentro) => ganador inmediato
+ *      b) si no => nearest_perimeter (más cercano al perímetro) => ganador
+ * - Distancia al perímetro en METROS (distance_m)
  * - Guarda en localStorage (geonemo_out_v2) y abre mapaout.html SIEMPRE
  *
  * IMPORTANTE:
- * - Requiere Turf.js disponible como "turf" (global).
+ * - Requiere Leaflet (L) y Turf.js global (turf).
  ************************************************************/
 
 const REGIONES_URL = "data/regiones.json";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
-const REGION_ZOOM_50K = 14;
 
 const OUT_STORAGE_KEY = "geonemo_out_v2";
 
-/**
- * Estructura de capas (segmentación por peso / bbox):
- * - SNASPE: Norte / Sur, Tipo 1 / Tipo 2
- * - RAMSAR: Norte, Tipo 1 / Tipo 2
- *
- * Ajusta urls a tu carpeta /capas/
- */
-const LAYERS = [
-  // ========= SNASPE =========
-  { id: "snaspe_norte_t1", name: "SNASPE Norte · Tipo 1", url: "capas/SNASPE_Norte_Tipo1.geojson", enabled: false },
-  { id: "snaspe_norte_t2", name: "SNASPE Norte · Tipo 2", url: "capas/SNASPE_Norte_Tipo2.geojson", enabled: false },
-  { id: "snaspe_sur_t1",   name: "SNASPE Sur · Tipo 1",   url: "capas/SNASPE_Sur_Tipo1.geojson",   enabled: false },
-  { id: "snaspe_sur_t2",   name: "SNASPE Sur · Tipo 2",   url: "capas/SNASPE_Sur_Tipo2.geojson",   enabled: false },
-
-  // Ejemplo actual (tu archivo subido)
-  { id: "snaspe_mn", name: "SNASPE · Monumento Natural", url: "capas/SNASPE_Monumento_Natural.geojson", enabled: true },
-
-  // ========= RAMSAR =========
-  { id: "ramsar_norte_t1", name: "RAMSAR Norte · Tipo 1", url: "capas/RAMSAR_Norte_Tipo1.geojson", enabled: false },
-  { id: "ramsar_norte_t2", name: "RAMSAR Norte · Tipo 2", url: "capas/RAMSAR_Norte_Tipo2.geojson", enabled: false },
+// ✅ Ruta pedida por ti:
+const GROUP_DEFS = [
+  { id: "snaspe", url: "capas/grupo_snaspe.json", enabled: true },
 ];
 
 // ====== mapa global ======
@@ -44,10 +31,10 @@ let userMarker = null;
 let clickMarker = null;
 
 /**
- * Índice por capa en memoria:
- * layerId -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
+ * Índice por archivo GeoJSON en memoria:
+ * fileUrl -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
  */
-const layerState = new Map();
+const fileState = new Map();
 
 /* ===========================
    UI helpers
@@ -213,19 +200,75 @@ async function cargarRegiones() {
 }
 
 /* ===========================
-   Load GeoJSON por capa + index bbox/area
+   Path helpers (para grupos)
 =========================== */
-async function ensureLayerLoaded(layer){
-  const st = layerState.get(layer.id) || { loaded:false, featuresIndex:[] };
+function dirname(path){
+  const s = String(path || "");
+  const i = s.lastIndexOf("/");
+  if (i <= 0) return "";
+  return s.slice(0, i + 1); // incluye "/"
+}
+
+function isAbsUrl(u){
+  return /^https?:\/\//i.test(u) || u.startsWith("/");
+}
+
+function joinPath(baseDir, rel){
+  if (!baseDir) return rel;
+  if (baseDir.endsWith("/") && rel.startsWith("/")) return baseDir + rel.slice(1);
+  if (!baseDir.endsWith("/") && !rel.startsWith("/")) return baseDir + "/" + rel;
+  return baseDir + rel;
+}
+
+/**
+ * Resuelve rutas de "files" respecto al folder del JSON de grupo.
+ * Ej:
+ *  groupUrl = "capas/grupo_snaspe.json" => baseDir "capas/"
+ *  file "capas_snaspe/xxx.geojson" => "capas/capas_snaspe/xxx.geojson"
+ *
+ * Si el file ya viene con "/" al inicio o http(s), se usa tal cual.
+ */
+function resolveGroupFileUrl(groupUrl, filePath){
+  const f = String(filePath || "");
+  if (isAbsUrl(f)) return f;
+  const baseDir = dirname(groupUrl);
+  return joinPath(baseDir, f);
+}
+
+/* ===========================
+   Carga grupo JSON
+=========================== */
+async function loadGroupDefinition(def){
+  const res = await fetch(def.url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`No se pudo cargar ${def.url} (HTTP ${res.status})`);
+  const gj = await res.json();
+
+  const groupName = gj.group || def.id || "GRUPO";
+  const filesRaw = Array.isArray(gj.files) ? gj.files : [];
+  const files = filesRaw
+    .map(f => resolveGroupFileUrl(def.url, f))
+    // opcional: filtrar solo geojson
+    .filter(u => /\.geojson$/i.test(u));
+
+  return {
+    group_id: def.id,
+    group_name: groupName,
+    enabled: def.enabled !== false,
+    files
+  };
+}
+
+/* ===========================
+   Load GeoJSON por ARCHIVO + index bbox/area
+=========================== */
+async function ensureFileLoaded(fileUrl){
+  const st = fileState.get(fileUrl) || { loaded:false, featuresIndex:[] };
   if (st.loaded) return st;
 
-  if (!assertTurfReady()) {
-    // no cargamos capas si falta turf (porque bbox/area depende)
-    return st;
-  }
+  if (!assertTurfReady()) return st;
 
-  const res = await fetch(layer.url, { cache:"no-store" });
-  if (!res.ok) throw new Error(`No se pudo cargar ${layer.url} (HTTP ${res.status})`);
+  const res = await fetch(fileUrl, { cache:"no-store" });
+  if (!res.ok) throw new Error(`No se pudo cargar ${fileUrl} (HTTP ${res.status})`);
 
   const gj = await res.json();
   const feats = gj.features || [];
@@ -245,14 +288,15 @@ async function ensureLayerLoaded(layer){
 
   st.loaded = true;
   st.featuresIndex = idx;
-  layerState.set(layer.id, st);
+  fileState.set(fileUrl, st);
 
-  toast(`✅ Cargada: ${layer.name} (${idx.length})`, 1600);
+  // Toast suave (sin ensuciar mucho)
+  toast(`✅ Cargado: ${fileUrl.split("/").pop()} (${idx.length})`, 1200);
   return st;
 }
 
 /* ===========================
-   Resumen BBOX (usa primera capa enabled como resumen)
+   Stats BBOX (usa primer grupo enabled)
 =========================== */
 const elStProtected = document.getElementById("stProtected");
 const elStTotal     = document.getElementById("stTotal");
@@ -274,52 +318,48 @@ function scheduleStatsUpdate(){
   });
 }
 
+let GROUPS = []; // grupos cargados en init
+
 async function updateBboxStats(){
   if (!map) return;
-  if (!assertTurfReady()) {
-    setStatsUI("—","—","—");
-    return;
-  }
+  if (!assertTurfReady()) { setStatsUI("—","—","—"); return; }
 
-  const layer = LAYERS.find(l => l.enabled) || LAYERS[0];
-  if (!layer) return;
+  const g = GROUPS.find(x => x.enabled) || GROUPS[0];
+  if (!g || !g.files?.length) { setStatsUI("—","—","—"); return; }
 
-  let st;
-  try{ st = await ensureLayerLoaded(layer); }
-  catch(e){
-    console.error(e);
-    setStatsUI("—","—","—");
-    return;
-  }
-
+  // Tomamos TODOS los archivos del grupo para stats (más fiel a “grupo”)
   const b = map.getBounds();
   const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   const bboxPoly = turf.bboxPolygon(bbox);
 
-  let totalAreas = 0;
-  let protectedAreas = 0;
+  let total = 0;
   let protectedAreaM2 = 0;
 
-  for (const it of st.featuresIndex){
-    if (!bboxIntersects(it.bbox, bbox)) continue;
+  for (const fileUrl of g.files){
+    let st;
+    try{ st = await ensureFileLoaded(fileUrl); }
+    catch(e){ continue; }
 
-    let touches = false;
-    try { touches = turf.booleanIntersects(it.feature, bboxPoly); } catch(_) {}
-    if (!touches) continue;
+    for (const it of (st.featuresIndex || [])){
+      if (!bboxIntersects(it.bbox, bbox)) continue;
 
-    totalAreas += 1;
-    protectedAreas += 1;
+      let touches = false;
+      try { touches = turf.booleanIntersects(it.feature, bboxPoly); } catch(_) {}
+      if (!touches) continue;
 
-    try {
-      const inter = turf.intersect(it.feature, bboxPoly);
-      if (inter) protectedAreaM2 += turf.area(inter);
-      else protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
-    } catch(_) {
-      protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
+      total += 1;
+
+      try {
+        const inter = turf.intersect(it.feature, bboxPoly);
+        if (inter) protectedAreaM2 += turf.area(inter);
+        else protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
+      } catch(_) {
+        protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
+      }
     }
   }
 
-  setStatsUI(fmtInt(protectedAreas), fmtInt(totalAreas), fmtArea(protectedAreaM2));
+  setStatsUI(fmtInt(total), fmtInt(total), fmtArea(protectedAreaM2));
 
   const prev = loadOut() || {};
   saveOut({
@@ -327,8 +367,10 @@ async function updateBboxStats(){
     updated_at: nowIso(),
     bbox: { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] },
     stats: {
-      areas_bbox: protectedAreas,
-      total_bbox: totalAreas,
+      group_id: g.group_id,
+      group_name: g.group_name,
+      areas_bbox: total,
+      total_bbox: total,
       protected_area_m2: protectedAreaM2,
       protected_area_fmt: fmtArea(protectedAreaM2)
     }
@@ -336,103 +378,129 @@ async function updateBboxStats(){
 }
 
 /* ===========================
-   Vinculación por capa:
-   - inside => ok
-   - else => nearest perimeter
+   Vinculación por GRUPO:
+   - inside => ok (ganador inmediato)
+   - else => nearest perimeter (mínimo en todo el grupo)
+   Distancia al perímetro en METROS.
 =========================== */
-function distToPerimeterKm(feature, pt){
+function distToPerimeterM(feature, pt){
   try{
     const line = turf.polygonToLine(feature);
-    const d = turf.pointToLineDistance(pt, line, { units:"kilometers" });
-    return isFinite(d) ? d : Infinity;
+    // ✅ en metros (si tu versión de turf no soporta "meters", usa "kilometers"*1000)
+    let d = turf.pointToLineDistance(pt, line, { units:"meters" });
+    if (!isFinite(d)) return Infinity;
+    return d;
   } catch(e){
-    return Infinity;
+    // fallback por compatibilidad
+    try{
+      const line = turf.polygonToLine(feature);
+      const km = turf.pointToLineDistance(pt, line, { units:"kilometers" });
+      return isFinite(km) ? km * 1000 : Infinity;
+    } catch(_){
+      return Infinity;
+    }
   }
 }
 
 /**
- * Devuelve SIEMPRE 1 feature ganador si hay features en la capa
- * (inside si existe, si no nearest_perimeter).
+ * Devuelve 1 ganador por grupo:
+ * - inside (si existe) o
+ * - nearest_perimeter (mínimo global)
  */
-async function linkOneLayerToPoint(layer, pt, lon, lat){
-  const st = await ensureLayerLoaded(layer);
-  const idx = st.featuresIndex || [];
-
-  // Si no hay features (o turf no cargó), retorna none
-  if (!idx.length) {
+async function linkOneGroupToPoint(group, pt, lon, lat){
+  const files = group.files || [];
+  if (!files.length) {
     return {
-      layer_id: layer.id,
-      layer_name: layer.name,
+      group_id: group.group_id,
+      group_name: group.group_name,
       link_type: "none",
-      distance_km: null,
+      distance_m: null,
+      source_file: null,
       feature: null
     };
   }
 
-  // 1) inside con prefiltrado bbox
-  let insideFeat = null;
-  for (const it of idx){
-    if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
-    let inside = false;
-    try{ inside = turf.booleanPointInPolygon(pt, it.feature); } catch(_) {}
-    if (inside){
-      insideFeat = it.feature;
-      break;
+  // 1) inside: recorrer archivos + bbox prefilter
+  for (const fileUrl of files){
+    const st = await ensureFileLoaded(fileUrl);
+    const idx = st.featuresIndex || [];
+    if (!idx.length) continue;
+
+    for (const it of idx){
+      if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
+      let inside = false;
+      try{ inside = turf.booleanPointInPolygon(pt, it.feature); } catch(_) {}
+      if (inside){
+        const f = it.feature;
+        return {
+          group_id: group.group_id,
+          group_name: group.group_name,
+          link_type: "inside",
+          distance_m: 0,
+          source_file: fileUrl,
+          feature: {
+            type: "Feature",
+            properties: f.properties || {},
+            geometry: f.geometry
+          }
+        };
+      }
     }
   }
 
-  if (insideFeat){
-    return {
-      layer_id: layer.id,
-      layer_name: layer.name,
-      link_type: "inside",
-      distance_km: 0,
-      feature: {
-        type: "Feature",
-        properties: insideFeat.properties || {},
-        geometry: insideFeat.geometry
+  // 2) nearest perimeter: mínimo entre TODOS los polígonos de TODOS los archivos
+  let bestD = Infinity;
+  let bestFeat = null;
+  let bestFile = null;
+
+  for (const fileUrl of files){
+    const st = await ensureFileLoaded(fileUrl);
+    const idx = st.featuresIndex || [];
+    if (!idx.length) continue;
+
+    for (const it of idx){
+      const d = distToPerimeterM(it.feature, pt);
+      if (d < bestD){
+        bestD = d;
+        bestFeat = it.feature;
+        bestFile = fileUrl;
       }
+    }
+  }
+
+  if (!bestFeat){
+    return {
+      group_id: group.group_id,
+      group_name: group.group_name,
+      link_type: "none",
+      distance_m: null,
+      source_file: null,
+      feature: null
     };
   }
 
-  // 2) nearest perimeter (siempre debería elegir 1)
-  let bestD = Infinity;
-  let bestFeat = null;
-
-  for (const it of idx){
-    const d = distToPerimeterKm(it.feature, pt);
-    if (d < bestD){
-      bestD = d;
-      bestFeat = it.feature;
-    }
-  }
-
-  // Si por alguna razón todos dieron Infinity, igual elige el primero (fallback real)
-  if (!bestFeat) bestFeat = idx[0].feature;
-
-  const outD = isFinite(bestD) ? bestD : null;
-
   return {
-    layer_id: layer.id,
-    layer_name: layer.name,
+    group_id: group.group_id,
+    group_name: group.group_name,
     link_type: "nearest_perimeter",
-    distance_km: outD,
-    feature: bestFeat ? {
+    distance_m: isFinite(bestD) ? bestD : null,
+    source_file: bestFile,
+    feature: {
       type: "Feature",
       properties: bestFeat.properties || {},
       geometry: bestFeat.geometry
-    } : null
+    }
   };
 }
 
 /* ===========================
-   Click: siempre abre MapaOut.html
+   Click: siempre abre mapaout.html
 =========================== */
 async function onMapClick(e){
   if (!assertTurfReady()) return;
 
   const lat = e.latlng.lat;
-  const lng = e.latlng.lng; // 👈 normalizado a lng
+  const lng = e.latlng.lng;
 
   if (clickMarker) map.removeLayer(clickMarker);
   clickMarker = L.circleMarker([lat, lng], {
@@ -441,39 +509,54 @@ async function onMapClick(e){
 
   const pt = turf.point([lng, lat]);
 
-  const activeLayers = LAYERS.filter(l => l.enabled !== false);
-  const links = [];
+  const activeGroups = (GROUPS || []).filter(g => g.enabled);
+  const results = [];
 
-  for (const layer of activeLayers){
+  for (const g of activeGroups){
     try{
-      const link = await linkOneLayerToPoint(layer, pt, lng, lat);
-      links.push(link);
-    } catch(e2){
-      console.warn("Error vinculando capa", layer, e2);
-      links.push({
-        layer_id: layer.id,
-        layer_name: layer.name,
+      const r = await linkOneGroupToPoint(g, pt, lng, lat);
+      results.push(r);
+    } catch(err){
+      console.warn("Error vinculando grupo", g, err);
+      results.push({
+        group_id: g.group_id,
+        group_name: g.group_name,
         link_type: "error",
-        distance_km: null,
+        distance_m: null,
+        source_file: null,
         feature: null
       });
     }
   }
 
-  const insideCount = links.filter(x => x.link_type === "inside").length;
-  toast(insideCount ? `✅ Dentro en ${insideCount} capa(s)` : "📍 Vinculación por proximidad al perímetro", 1600);
+  const insideCount = results.filter(x => x.link_type === "inside").length;
+  toast(insideCount ? `✅ Dentro en ${insideCount} grupo(s)` : "📍 Vinculación por proximidad al perímetro", 1600);
 
   const prev = loadOut() || {};
+
+  // ✅ Compatibilidad: además de "groups", dejamos "links" estilo antiguo
+  const legacyLinks = results.map(r => ({
+    layer_id: r.group_id,
+    layer_name: r.group_name,
+    link_type: r.link_type,
+    // antes era km; ahora guardamos metros y dejamos km calculado si lo necesitas
+    distance_km: isFinite(r.distance_m) ? (r.distance_m / 1000) : null,
+    distance_m: r.distance_m ?? null,
+    source_file: r.source_file ?? null,
+    feature: r.feature
+  }));
+
   saveOut({
     ...prev,
     created_at: prev.created_at || nowIso(),
     updated_at: nowIso(),
-
-    // 👇 click normalizado
     click: { lat, lng },
 
-    // links por capa (cada uno con 1 feature ganador o null)
-    links
+    // ✅ nuevo formato por grupo
+    groups: results,
+
+    // ✅ legacy para que mapaout viejo no se rompa
+    links: legacyLinks
   });
 
   openOut();
@@ -506,9 +589,7 @@ function bindUI() {
     });
   }
 
-  if (btnOut) {
-    btnOut.addEventListener("click", () => openOut());
-  }
+  if (btnOut) btnOut.addEventListener("click", () => openOut());
 
   if (btnGPS) {
     btnGPS.addEventListener("click", () => {
@@ -542,9 +623,13 @@ function bindUI() {
   if (btnPreload) {
     btnPreload.addEventListener("click", async () => {
       try {
-        const activeLayers = LAYERS.filter(l => l.enabled !== false);
-        for (const layer of activeLayers) await ensureLayerLoaded(layer);
-        toast("⬇️ Capas precargadas", 1400);
+        const activeGroups = (GROUPS || []).filter(g => g.enabled);
+        for (const g of activeGroups){
+          for (const fileUrl of (g.files || [])){
+            await ensureFileLoaded(fileUrl);
+          }
+        }
+        toast("⬇️ Archivos del grupo precargados", 1400);
         scheduleStatsUpdate();
       } catch (err) {
         console.error(err);
@@ -562,9 +647,32 @@ function bindUI() {
   bindUI();
   await cargarRegiones();
 
-  // precarga “silenciosa” de la primera enabled
-  const first = LAYERS.find(l => l.enabled) || LAYERS[0];
-  if (first) ensureLayerLoaded(first).catch(() => {});
+  // Cargar definiciones de grupos
+  try{
+    const defs = GROUP_DEFS.filter(d => d.enabled !== false);
+    const loaded = [];
+    for (const d of defs){
+      const g = await loadGroupDefinition(d);
+      loaded.push(g);
+    }
+    GROUPS = loaded;
 
-  toast("Listo ✅ Clic para vincular 1 polígono por capa y abrir MapaOut.", 2600);
+    if (!GROUPS.length){
+      toast("⚠️ No hay grupos cargados", 2600);
+    } else {
+      toast(`✅ Grupos cargados: ${GROUPS.map(g => g.group_name).join(", ")}`, 2200);
+    }
+  } catch(e){
+    console.error(e);
+    toast("⚠️ No pude cargar grupos (ver consola)", 2800);
+    GROUPS = [];
+  }
+
+  // precarga silenciosa del primer archivo del primer grupo
+  const firstGroup = GROUPS.find(g => g.enabled) || GROUPS[0];
+  const firstFile = firstGroup?.files?.[0];
+  if (firstFile) ensureFileLoaded(firstFile).catch(() => {});
+
+  scheduleStatsUpdate();
+  toast("Listo ✅ Clic para vincular 1 polígono ganador por GRUPO y abrir MapaOut.", 2600);
 })();
