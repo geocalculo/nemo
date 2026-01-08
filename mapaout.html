@@ -9,6 +9,9 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- ✅ Turf (área, centroide, distancias) -->
+  <script defer src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
   <link rel="stylesheet" href="./css/mapaout.css" />
   <script defer src="./js/mapaout.js"></script>
 </head>
@@ -95,6 +98,47 @@
               <div><div class="tech__k">Key localStorage</div><div class="tech__v"><code>geonemo_out_v2</code></div></div>
             </div>
           </div>
+
+          <!-- ✅ NUEVO: Estadígrafos -->
+          <div class="kpiFull" style="margin-top:10px;">
+            <div class="cardHead" style="padding:0; margin:0 0 8px 0;">
+              <div class="cardTitle" style="font-size:14px; opacity:.9;">Estadígrafos</div>
+            </div>
+
+            <div>
+              <div class="tech__k">Distancia mínima al borde</div>
+              <div id="metDistBorde" class="tech__v">—</div>
+            </div>
+
+
+            <div class="tech__grid" style="gap:10px;">
+              <div>
+                <div class="tech__k">Distancia al centroide</div>
+                <div id="metDistCentroid" class="tech__v">—</div>
+              </div>
+
+              <div>
+                <div class="tech__k">Diámetro equivalente</div>
+                <div id="metDiamEq" class="tech__v">—</div>
+              </div>
+
+              <div>
+                <div class="tech__k">Centroide (grados decimales)</div>
+                <div id="metCentroidDD" class="tech__v">—</div>
+              </div>
+
+              <div>
+                <div class="tech__k">Centroide (gg:mm:ss)</div>
+                <div id="metCentroidDMS" class="tech__v">—</div>
+              </div>
+
+              <div style="grid-column: 1 / -1;">
+                <div class="tech__k">Superficie área</div>
+                <div id="metArea" class="tech__v">—</div>
+              </div>
+            </div>
+          </div>
+          <!-- /Estadígrafos -->
         </div>
 
       </div>

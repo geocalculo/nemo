@@ -1,17 +1,9 @@
 (() => {
   "use strict";
 
-  // ==========================
-  // CONFIG
-  // ==========================
   const STORAGE_KEY = "geonemo_out_v2";
-
-  // ✅ Preferencias de mapa heredadas desde index
   const MAP_PREF_KEY = "geonemo_map_pref";
 
-  // ==========================
-  // DOM REFS
-  // ==========================
   const el = {
     map: document.getElementById("map"),
     toast: document.getElementById("toast"),
@@ -35,24 +27,26 @@
     techClick: document.getElementById("techClick"),
     techBbox: document.getElementById("techBbox"),
 
+    // Estadígrafos (de tu HTML)
+    metDistBorde: document.getElementById("metDistBorde"),
+    metDistCentroid: document.getElementById("metDistCentroid"),
+    metDiamEq: document.getElementById("metDiamEq"),
+    metCentroidDD: document.getElementById("metCentroidDD"),
+    metCentroidDMS: document.getElementById("metCentroidDMS"),
+    metArea: document.getElementById("metArea"),
+
     layersCount: document.getElementById("layersCount"),
     layersList: document.getElementById("layersList"),
 
     attrsBox: document.getElementById("attrsBox"),
   };
 
-  // ==========================
-  // STATE
-  // ==========================
   let payload = null;
   let map = null;
   let pointMarker = null;
   let polyLayer = null;
   let selectedLayerId = null;
 
-  // ==========================
-  // UI HELPERS
-  // ==========================
   function showToast(msg) {
     if (!el.toast) return;
     el.toast.textContent = msg;
@@ -71,6 +65,22 @@
     const mm = Math.abs(Number(m));
     if (mm < 1000) return `${Math.round(mm)} m`;
     return `${(mm / 1000).toFixed(2)} km`;
+  }
+
+  function fmtArea(m2) {
+    if (m2 === null || m2 === undefined || !Number.isFinite(Number(m2))) return "—";
+    const v = Number(m2);
+    const ha = v / 10000;
+    const km2 = v / 1e6;
+    const m2s = Math.round(v).toLocaleString("es-CL");
+    const has = ha.toLocaleString("es-CL", { maximumFractionDigits: 2 });
+    const km2s = km2.toLocaleString("es-CL", { maximumFractionDigits: 3 });
+    return `${m2s} m² · ${has} ha · ${km2s} km²`;
+  }
+
+  function readMapPref(){
+    try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
+    catch { return {}; }
   }
 
   function dom(tag, attrs = {}, children = []) {
@@ -108,21 +118,9 @@
     el.downloadsMenu.setAttribute("aria-hidden", open ? "false" : "true");
   }
 
-  // ==========================
-  // MAP PREFS
-  // ==========================
-  function readMapPref(){
-    try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
-    catch { return {}; }
-  }
-
-  // ==========================
-  // GEO HELPERS
-  // ==========================
   function normalizeClick(click) {
     if (!click) return null;
 
-    // array [lat,lng] or [lng,lat]
     if (Array.isArray(click) && click.length >= 2) {
       const a = Number(click[0]);
       const b = Number(click[1]);
@@ -132,7 +130,6 @@
       return { lat: a, lng: b };
     }
 
-    // object {lat,lng} or {lat,lon} or {y,x}
     if (typeof click === "object") {
       if (click.lat !== undefined && click.lng !== undefined) return { lat: +click.lat, lng: +click.lng };
       if (click.lat !== undefined && click.lon !== undefined) return { lat: +click.lat, lng: +click.lon };
@@ -156,9 +153,19 @@
     return null;
   }
 
-  // ==========================
-  // BADGES (UI)
-  // ==========================
+  function ddToDms(dd, isLat) {
+    if (!Number.isFinite(Number(dd))) return "—";
+    const v = Number(dd);
+    const dir = isLat ? (v >= 0 ? "N" : "S") : (v >= 0 ? "E" : "W");
+    const av = Math.abs(v);
+    const deg = Math.floor(av);
+    const minFloat = (av - deg) * 60;
+    const min = Math.floor(minFloat);
+    const sec = (minFloat - min) * 60;
+    const secStr = sec.toFixed(2).padStart(5, "0");
+    return `${deg}°${String(min).padStart(2, "0")}'${secStr}" ${dir}`;
+  }
+
   function statusToBadge(status) {
     const s = String(status || "").toLowerCase();
     if (["in", "inside", "within", "onedge", "on_edge", "edge"].includes(s)) return { label: "DENTRO", cls: "badge--in" };
@@ -177,9 +184,6 @@
     return { label: "—", cls: "none" };
   }
 
-  // ==========================
-  // STORAGE
-  // ==========================
   function loadPayload() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
@@ -187,9 +191,6 @@
     catch { return null; }
   }
 
-  // ==========================
-  // NORMALIZATION (index.js -> mapaout.js)
-  // ==========================
   function canonicalStatusFromLinkType(linkType) {
     const lt = String(linkType || "").toLowerCase();
     if (["inside", "in", "within", "edge", "onedge", "on_edge"].includes(lt)) return "inside";
@@ -198,44 +199,9 @@
     return "none";
   }
 
-  function generateSummaryFromLinks(links) {
-    if (!Array.isArray(links) || !links.length) {
-      return { status: "none", rawStatus: "none", minDistanceM: null, dominantLayer: "—" };
-    }
-
-    const rank = (lt) => {
-      const s = String(lt || "").toLowerCase();
-      if (s === "inside") return 3;
-      if (s === "nearest_perimeter") return 2;
-      if (s === "none") return 1;
-      return 0;
-    };
-
-    const sorted = [...links].sort((a, b) => {
-      const r = rank(b.link_type) - rank(a.link_type);
-      if (r !== 0) return r;
-      const da = (a.distance_km != null) ? Number(a.distance_km) : Infinity;
-      const db = (b.distance_km != null) ? Number(b.distance_km) : Infinity;
-      return da - db;
-    });
-
-    const domLink = sorted[0];
-    const rawStatus = String(domLink.link_type || "none").toLowerCase();
-    const status = canonicalStatusFromLinkType(rawStatus);
-
-    return {
-      status,
-      rawStatus,
-      minDistanceM: (domLink.distance_km != null) ? Number(domLink.distance_km) * 1000 : null,
-      dominantLayer: domLink.layer_name || "—"
-    };
-  }
-
   function normalizePayload(raw) {
     if (!raw || typeof raw !== "object") return null;
-
     const out = { ...raw };
-
     out.updatedAt = out.updatedAt || out.updated_at || new Date().toISOString();
 
     if (out.click && typeof out.click === "object") {
@@ -244,12 +210,14 @@
       }
     }
 
+    // convertir bbox objeto -> array si viene así
     if (out.bbox && typeof out.bbox === "object" && !Array.isArray(out.bbox)) {
       const w = Number(out.bbox.west), s = Number(out.bbox.south),
             e = Number(out.bbox.east), n = Number(out.bbox.north);
       if ([w, s, e, n].every(Number.isFinite)) out.bbox = [w, s, e, n];
     }
 
+    // links[] -> layers[]
     if (!Array.isArray(out.layers) && Array.isArray(out.links)) {
       out.layers = out.links.map((link, i) => {
         const status = canonicalStatusFromLinkType(link.link_type || link.status);
@@ -260,47 +228,29 @@
           name: link.layer_name || link.name || "Capa",
           status,
           rawStatus: String(link.link_type || link.status || "").toLowerCase(),
-          distanceM: (link.distance_km != null && isFinite(link.distance_km)) ? Number(link.distance_km) * 1000
-                   : (link.distanceM != null ? Number(link.distanceM) : null),
+
+          // Distancia de dictamen (inside=0, prox=distancia)
+          distanceM: (link.distance_km != null && isFinite(link.distance_km))
+            ? Number(link.distance_km) * 1000
+            : (link.distance_m != null ? Number(link.distance_m) : null),
+
+          // ✅ NUEVO: distancia al borde (estadígrafos)
+          borderDistanceM: (link.distance_border_m != null && isFinite(link.distance_border_m))
+            ? Number(link.distance_border_m)
+            : null,
+
           polygon: poly,
           properties: (poly?.properties) || link.properties || null
         };
       });
-
-      if (!out.summary) out.summary = generateSummaryFromLinks(out.links);
-    } else if (!out.summary && Array.isArray(out.layers)) {
-      const best = [...out.layers].sort((a, b) => {
-        const ra = (a.status === "inside") ? 3 : (a.status === "prox") ? 2 : (a.status === "out") ? 1 : 0;
-        const rb = (b.status === "inside") ? 3 : (b.status === "prox") ? 2 : (b.status === "out") ? 1 : 0;
-        if (rb !== ra) return rb - ra;
-        const da = (a.distanceM != null) ? Number(a.distanceM) : Infinity;
-        const db = (b.distanceM != null) ? Number(b.distanceM) : Infinity;
-        return da - db;
-      })[0];
-
-      out.summary = {
-        status: best?.status || "none",
-        rawStatus: best?.rawStatus || best?.status || "none",
-        minDistanceM: (best?.distanceM != null) ? Number(best.distanceM) : null,
-        dominantLayer: best?.name || "—"
-      };
     }
 
     return out;
   }
 
-  // ==========================
-  // MAP
-  // ==========================
   function initMap(click) {
-    if (!window.L) {
-      console.error("Leaflet (L) no está cargado.");
-      return;
-    }
-
     map = L.map("map", { zoomControl: true, attributionControl: true });
 
-    // ✅ Basemap igual a index (OpenTopoMap)
     const topoBase = L.tileLayer(
       "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
       {
@@ -313,7 +263,6 @@
       }
     );
 
-    // ✅ Overlay igual a index (Esri Satélite 25%)
     const satOverlay = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       {
@@ -328,11 +277,9 @@
     const pref = readMapPref();
     topoBase.addTo(map);
 
-    // Por defecto lo dejamos ON (igual que index), salvo que venga explícitamente apagado
     const wantSat = (pref.overlay === "Esri Satélite") || (pref.overlay == null);
     if (wantSat) satOverlay.addTo(map);
 
-    // Capa polígono resultado
     polyLayer = L.geoJSON(null, {
       style: () => ({
         color: "#38bdf8",
@@ -382,9 +329,83 @@
     }
   }
 
-  // ==========================
-  // RENDERERS
-  // ==========================
+  function setMetricsEmpty() {
+    if (el.metDistBorde) el.metDistBorde.textContent = "—";
+    if (el.metDistCentroid) el.metDistCentroid.textContent = "—";
+    if (el.metDiamEq) el.metDiamEq.textContent = "—";
+    if (el.metCentroidDD) el.metCentroidDD.textContent = "—";
+    if (el.metCentroidDMS) el.metCentroidDMS.textContent = "—";
+    if (el.metArea) el.metArea.textContent = "—";
+  }
+
+  function updateMetricsForSelectedPolygon(layer) {
+    // Distancia mínima al borde (primero)
+    const dB = (layer?.borderDistanceM != null) ? layer.borderDistanceM : null;
+    if (el.metDistBorde) el.metDistBorde.textContent = fmtDist(dB);
+
+    // Resto requiere Turf + polígono
+    if (!window.turf || !layer || !hasGeoJSON(layer.polygon)) {
+      // mantenemos borde ya seteado (si lo hay), y el resto en —
+      if (el.metDistCentroid) el.metDistCentroid.textContent = "—";
+      if (el.metDiamEq) el.metDiamEq.textContent = "—";
+      if (el.metCentroidDD) el.metCentroidDD.textContent = "—";
+      if (el.metCentroidDMS) el.metCentroidDMS.textContent = "—";
+      if (el.metArea) el.metArea.textContent = "—";
+      return;
+    }
+
+    try {
+      const fc = toFeatureCollection(layer.polygon);
+      const feat = fc?.features?.[0];
+      if (!feat) return;
+
+      const areaM2 = turf.area(feat);
+
+      const c = turf.centroid(feat);
+      const lon = c?.geometry?.coordinates?.[0];
+      const lat = c?.geometry?.coordinates?.[1];
+
+      const click = normalizeClick(payload?.click);
+      let distCentroidM = null;
+      if (click && Number.isFinite(lat) && Number.isFinite(lon)) {
+        const pClick = turf.point([click.lng, click.lat]);
+        const pC = turf.point([lon, lat]);
+        distCentroidM = turf.distance(pClick, pC, { units: "kilometers" }) * 1000;
+      }
+
+      const diamM = (Number.isFinite(areaM2) && areaM2 > 0)
+        ? (2 * Math.sqrt(areaM2 / Math.PI))
+        : null;
+
+      if (el.metArea) el.metArea.textContent = fmtArea(areaM2);
+      if (el.metDistCentroid) el.metDistCentroid.textContent = fmtDist(distCentroidM);
+
+      if (el.metDiamEq) {
+        if (diamM == null || !Number.isFinite(diamM)) el.metDiamEq.textContent = "—";
+        else el.metDiamEq.textContent = (diamM < 1000)
+          ? `${Math.round(diamM)} m`
+          : `${(diamM/1000).toFixed(2)} km`;
+      }
+
+      if (el.metCentroidDD) {
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          el.metCentroidDD.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+        } else el.metCentroidDD.textContent = "—";
+      }
+
+      if (el.metCentroidDMS) {
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          const latDms = ddToDms(lat, true);
+          const lonDms = ddToDms(lon, false);
+          el.metCentroidDMS.textContent = `${latDms} · ${lonDms}`;
+        } else el.metCentroidDMS.textContent = "—";
+      }
+
+    } catch (e) {
+      console.warn("updateMetricsForSelectedPolygon:", e);
+    }
+  }
+
   function renderAttrs(obj) {
     if (!el.attrsBox) return;
     el.attrsBox.innerHTML = "";
@@ -442,54 +463,22 @@
     }
 
     if (el.kpiLayer) el.kpiLayer.textContent = safeText(layer.name || "—");
-    const dist = (layer.distanceM !== null && layer.distanceM !== undefined)
-      ? layer.distanceM
-      : (payload?.summary?.minDistanceM ?? null);
-    if (el.kpiDist) el.kpiDist.textContent = fmtDist(dist);
+    if (el.kpiDist) el.kpiDist.textContent = fmtDist(layer.distanceM);
 
     if (el.kpiStatus) {
       const b2 = statusToBadge(layer.status);
       el.kpiStatus.className = `badge ${b2.cls}`;
       el.kpiStatus.textContent = b2.label;
     }
+
+    updateMetricsForSelectedPolygon(layer);
   }
 
   function renderTopKPIs() {
     if (!payload) return;
-    const summary = payload.summary || {};
     const layers = Array.isArray(payload.layers) ? payload.layers : [];
 
-    let status = summary.status;
-    let dominantLayer = summary.dominantLayer;
-
-    if (!status || !dominantLayer) {
-      const rank = (s) => {
-        const x = String(s || "").toLowerCase();
-        if (x === "inside") return 4;
-        if (x === "prox") return 3;
-        if (x === "out") return 2;
-        if (x === "none") return 1;
-        return 0;
-      };
-      const best = [...layers].sort((a, b) => rank(b.status) - rank(a.status))[0];
-      if (!status && best?.status) status = best.status;
-      if (!dominantLayer && best?.name) dominantLayer = best.name;
-    }
-
-    if (el.kpiStatus) {
-      const b = statusToBadge(status);
-      el.kpiStatus.className = `badge ${b.cls}`;
-      el.kpiStatus.textContent = b.label;
-    }
-
-    let minD = summary.minDistanceM;
-    if (minD === null || minD === undefined) {
-      const ds = layers.map(l => l?.distanceM).filter(v => v !== null && v !== undefined && Number.isFinite(Number(v)));
-      if (ds.length) minD = Math.min(...ds.map(Number));
-    }
-    if (el.kpiDist) el.kpiDist.textContent = fmtDist(minD);
-    if (el.kpiLayer) el.kpiLayer.textContent = dominantLayer ? safeText(dominantLayer) : "—";
-
+    // tech
     if (el.techUpdated) el.techUpdated.textContent = safeText(payload.updatedAt || "—");
     const click = normalizeClick(payload.click);
     if (el.techClick) el.techClick.textContent = click ? `${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}` : "—";
@@ -500,6 +489,19 @@
         el.techBbox.textContent = `${Number(w).toFixed(3)}, ${Number(s).toFixed(3)} — ${Number(e).toFixed(3)}, ${Number(n).toFixed(3)}`;
       } else {
         el.techBbox.textContent = "—";
+      }
+    }
+
+    setMetricsEmpty();
+
+    if (layers.length) {
+      const best = layers.find(l => hasGeoJSON(l.polygon)) || layers[0];
+      if (el.kpiLayer) el.kpiLayer.textContent = safeText(best?.name || "—");
+      if (el.kpiDist) el.kpiDist.textContent = fmtDist(best?.distanceM ?? null);
+      if (el.kpiStatus) {
+        const b = statusToBadge(best?.status);
+        el.kpiStatus.className = `badge ${b.cls}`;
+        el.kpiStatus.textContent = b.label;
       }
     }
   }
@@ -551,9 +553,6 @@
     });
   }
 
-  // ==========================
-  // EVENTS
-  // ==========================
   function wireEvents() {
     if (el.btnBack) {
       el.btnBack.addEventListener("click", () => {
@@ -621,9 +620,6 @@
     });
   }
 
-  // ==========================
-  // BOOT
-  // ==========================
   function renderNoPayload() {
     const shell = document.querySelector(".shell") || document.body;
     shell.innerHTML =
@@ -654,11 +650,11 @@
     const layers = Array.isArray(payload.layers) ? payload.layers : [];
     const best = layers.find(l => hasGeoJSON(l.polygon)) || layers[0];
 
-    if (best && best.__id) {
-      selectLayer(best.__id, { zoom: false });
-    } else if (best && best.id) {
-      selectLayer(String(best.id), { zoom: false });
-    }
+    // __id se setea en renderLayers
+    setTimeout(() => {
+      if (best && best.__id) selectLayer(best.__id, { zoom: false });
+      else if (best && best.id) selectLayer(String(best.id), { zoom: false });
+    }, 0);
 
     setTimeout(() => {
       if (map) map.invalidateSize(true);

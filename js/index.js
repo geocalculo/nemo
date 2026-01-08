@@ -3,17 +3,22 @@
  *
  * - Carga grupos desde:
  *    /capas/grupo_snaspe.json
- * - Cada grupo tiene "files": lista de GeoJSON (subcapas).
  * - Click:
  *    Para cada GRUPO => 1 único polígono ganador:
  *      a) inside (punto dentro) => ganador inmediato
  *      b) si no => nearest_perimeter (más cercano al perímetro) => ganador
- * - Distancia al perímetro en METROS (distance_m)
+ *
+ * - distance_m:
+ *    * inside => 0  (dictamen “DENTRO”)
+ *    * nearest_perimeter => distancia mínima al borde (m)
+ *
+ * - distance_border_m:
+ *    * inside => distancia mínima al BORDE (m) (aunque esté dentro)
+ *    * nearest_perimeter => igual a distance_m
+ *
  * - Guarda en localStorage (geonemo_out_v2) y abre mapaout.html SIEMPRE
  *
- * + NUEVO:
- * - Guarda preferencia de mapabase/overlay en localStorage
- *   para que mapaout.html herede la misma configuración.
+ * + Preferencia mapabase/overlay en localStorage (geonemo_map_pref)
  *
  * IMPORTANTE:
  * - Requiere Leaflet (L) y Turf.js global (turf).
@@ -23,8 +28,6 @@ const REGIONES_URL = "data/regiones.json";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
 
 const OUT_STORAGE_KEY = "geonemo_out_v2";
-
-// ✅ Preferencias de mapa (herencia hacia mapaout)
 const MAP_PREF_KEY = "geonemo_map_pref";
 
 // ✅ Ruta pedida por ti:
@@ -32,19 +35,15 @@ const GROUP_DEFS = [
   { id: "snaspe", url: "capas/grupo_snaspe.json", enabled: true },
 ];
 
-// ====== mapa global ======
 let map;
 let userMarker = null;
 let clickMarker = null;
 
-// Guardamos referencias a tiles para persistir estado
+// Tiles (persistencia)
 let topoBase = null;
 let satOverlay = null;
 
-/**
- * Índice por archivo GeoJSON en memoria:
- * fileUrl -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
- */
+// fileUrl -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
 const fileState = new Map();
 
 /* ===========================
@@ -74,7 +73,6 @@ function fmtArea(m2){
 function nowIso(){ return new Date().toISOString(); }
 
 function bboxIntersects(b1, b2){
-  // [minLon,minLat,maxLon,maxLat]
   return !(b2[0] > b1[2] || b2[2] < b1[0] || b2[1] > b1[3] || b2[3] < b1[1]);
 }
 
@@ -83,7 +81,7 @@ function bboxContainsLonLat(bb, lon, lat) {
 }
 
 /* ===========================
-   Validación Turf (CRÍTICO)
+   Turf check
 =========================== */
 function assertTurfReady() {
   const ok =
@@ -125,7 +123,7 @@ function openOut(){
 }
 
 /* ===========================
-   Preferencias mapa (basemap/overlay)
+   Preferencias mapa
 =========================== */
 function readMapPref(){
   try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
@@ -179,19 +177,15 @@ function crearMapa() {
     }
   );
 
-  // ✅ Restaurar preferencia (si existe)
   const pref = readMapPref();
 
   topoBase.addTo(map);
-  // Por defecto en tu diseño: overlay encendido
+  // por defecto ON
   const wantSat = (pref.overlay === "Esri Satélite") || (pref.overlay == null);
   if (wantSat) satOverlay.addTo(map);
 
-  // ✅ Persistir cambios (si en el futuro agregas toggle)
   map.on("layeradd", syncMapPrefFromCurrentLayers);
   map.on("layerremove", syncMapPrefFromCurrentLayers);
-
-  // Al iniciar, guarda estado real
   syncMapPrefFromCurrentLayers();
 
   map.on("moveend", scheduleStatsUpdate);
@@ -202,7 +196,7 @@ function crearMapa() {
 }
 
 /* ===========================
-   Regiones (solo navegación)
+   Regiones
 =========================== */
 async function cargarRegiones() {
   const sel = document.getElementById("selRegion");
@@ -248,13 +242,13 @@ async function cargarRegiones() {
 }
 
 /* ===========================
-   Path helpers (para grupos)
+   Path helpers
 =========================== */
 function dirname(path){
   const s = String(path || "");
   const i = s.lastIndexOf("/");
   if (i <= 0) return "";
-  return s.slice(0, i + 1); // incluye "/"
+  return s.slice(0, i + 1);
 }
 
 function isAbsUrl(u){
@@ -268,9 +262,6 @@ function joinPath(baseDir, rel){
   return baseDir + rel;
 }
 
-/**
- * Resuelve rutas de "files" respecto al folder del JSON de grupo.
- */
 function resolveGroupFileUrl(groupUrl, filePath){
   const f = String(filePath || "");
   if (isAbsUrl(f)) return f;
@@ -337,7 +328,7 @@ async function ensureFileLoaded(fileUrl){
 }
 
 /* ===========================
-   Stats BBOX (usa primer grupo enabled)
+   Stats BBOX
 =========================== */
 const elStProtected = document.getElementById("stProtected");
 const elStTotal     = document.getElementById("stTotal");
@@ -359,7 +350,7 @@ function scheduleStatsUpdate(){
   });
 }
 
-let GROUPS = []; // grupos cargados en init
+let GROUPS = [];
 
 async function updateBboxStats(){
   if (!map) return;
@@ -418,7 +409,7 @@ async function updateBboxStats(){
 }
 
 /* ===========================
-   Vinculación por GRUPO:
+   Distancia al perímetro (m)
 =========================== */
 function distToPerimeterM(feature, pt){
   try{
@@ -437,6 +428,9 @@ function distToPerimeterM(feature, pt){
   }
 }
 
+/* ===========================
+   Vinculación por GRUPO
+=========================== */
 async function linkOneGroupToPoint(group, pt, lon, lat){
   const files = group.files || [];
   if (!files.length) {
@@ -445,6 +439,7 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
       group_name: group.group_name,
       link_type: "none",
       distance_m: null,
+      distance_border_m: null,
       source_file: null,
       feature: null
     };
@@ -458,15 +453,27 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
 
     for (const it of idx){
       if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
+
       let inside = false;
       try{ inside = turf.booleanPointInPolygon(pt, it.feature); } catch(_) {}
+
       if (inside){
         const f = it.feature;
+
+        // ✅ distancia mínima al borde aunque esté dentro
+        const dBorde = distToPerimeterM(f, pt);
+
         return {
           group_id: group.group_id,
           group_name: group.group_name,
           link_type: "inside",
+
+          // ✅ dictamen “DENTRO” -> KPI distancia mínima se mantiene 0
           distance_m: 0,
+
+          // ✅ pero guardamos la distancia al BORDE para estadígrafos
+          distance_border_m: isFinite(dBorde) ? dBorde : null,
+
           source_file: fileUrl,
           feature: {
             type: "Feature",
@@ -504,16 +511,23 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
       group_name: group.group_name,
       link_type: "none",
       distance_m: null,
+      distance_border_m: null,
       source_file: null,
       feature: null
     };
   }
 
+  const dFinal = isFinite(bestD) ? bestD : null;
+
   return {
     group_id: group.group_id,
     group_name: group.group_name,
     link_type: "nearest_perimeter",
-    distance_m: isFinite(bestD) ? bestD : null,
+    distance_m: dFinal,
+
+    // ✅ en proximidad, borde = distancia
+    distance_border_m: dFinal,
+
     source_file: bestFile,
     feature: {
       type: "Feature",
@@ -553,6 +567,7 @@ async function onMapClick(e){
         group_name: g.group_name,
         link_type: "error",
         distance_m: null,
+        distance_border_m: null,
         source_file: null,
         feature: null
       });
@@ -564,12 +579,19 @@ async function onMapClick(e){
 
   const prev = loadOut() || {};
 
+  // ✅ mapaout consume payload.links -> layers
   const legacyLinks = results.map(r => ({
     layer_id: r.group_id,
     layer_name: r.group_name,
     link_type: r.link_type,
+
+    // “distancia mínima” (dictamen)
     distance_km: isFinite(r.distance_m) ? (r.distance_m / 1000) : null,
     distance_m: r.distance_m ?? null,
+
+    // ✅ NUEVO: distancia al borde (estadígrafos)
+    distance_border_m: r.distance_border_m ?? null,
+
     source_file: r.source_file ?? null,
     feature: r.feature
   }));
@@ -672,7 +694,6 @@ function bindUI() {
   bindUI();
   await cargarRegiones();
 
-  // Cargar definiciones de grupos
   try{
     const defs = GROUP_DEFS.filter(d => d.enabled !== false);
     const loaded = [];
