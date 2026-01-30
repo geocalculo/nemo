@@ -1,6 +1,6 @@
 {
   "groups": [
-        {
+    {
       "id": "RAMSAR",
       "label": "Sitios Ramsar",
       "description": "Humedales de importancia internacional (Convención Ramsar)",
@@ -22,6 +22,5 @@
         "capas_snaspe/SNASPE_Monumento_Natural.geojson"
       ]
     }
-
   ]
 }
