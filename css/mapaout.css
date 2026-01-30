@@ -356,3 +356,184 @@ body{
   justify-content: center;
   gap: 4px;
 }
+
+/* =========================
+   Resultados por grupo (A)
+========================= */
+
+.groupsWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 10px 0 2px 0;
+}
+
+.groupCard {
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(10,18,35,.55);
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.groupHead:hover {
+  background: rgba(255,255,255,.03);
+}
+
+.groupTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.groupTitle__name {
+  font-weight: 700;
+  letter-spacing: .2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.groupTitle__sub {
+  font-size: 12px;
+  opacity: .75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.groupMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.groupMeta .badgeMini {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  opacity: .92;
+}
+
+.groupMeta .badgeMini.in { background: rgba(34,197,94,.16); }
+.groupMeta .badgeMini.prox { background: rgba(56,189,248,.14); }
+.groupMeta .badgeMini.out { background: rgba(244,63,94,.14); }
+.groupMeta .badgeMini.none { background: rgba(148,163,184,.10); }
+
+.groupChevron {
+  opacity: .7;
+  font-size: 14px;
+}
+
+.groupBody {
+  padding: 12px 14px 14px 14px;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+
+.groupBody.isHidden { display: none; }
+
+/* layout: Desktop 2 columnas (mapa + dictamen) */
+.groupGrid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+/* Mobile: 1 columna */
+@media (max-width: 860px) {
+  .groupGrid { grid-template-columns: 1fr; }
+}
+
+.groupMapCard {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.15);
+}
+
+.groupMapHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+
+.groupMapHead .left {
+  font-weight: 700;
+  opacity: .92;
+  font-size: 13px;
+}
+
+.groupMapHead .right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.groupMap {
+  height: 340px;
+}
+
+@media (max-width: 860px) {
+  .groupMap { height: 320px; }
+}
+
+.groupSide {
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.10);
+  padding: 12px;
+}
+
+.groupKpis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.groupKpis .kpiFull { grid-column: 1 / -1; }
+
+.groupAttrs {
+  margin-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.06);
+  padding-top: 10px;
+}
+
+.groupAttrs .attrTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.groupAttrs .attrTable td {
+  padding: 6px 6px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  vertical-align: top;
+}
+
+.groupAttrs .attrTable td.k { opacity: .75; width: 38%; }
+.groupAttrs .attrTable td.v { opacity: .95; word-break: break-word; }
+
+.leaflet-tooltip.groupTag {
+  background: rgba(15, 23, 42, .92);
+  color: #e2e8f0;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 10px;
+  padding: 4px 8px;
+  font-size: 12px;
+  box-shadow: 0 10px 22px rgba(0,0,0,.28);
+}

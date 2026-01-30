@@ -3,51 +3,27 @@
 
   const STORAGE_KEY = "geonemo_out_v2";
   const MAP_PREF_KEY = "geonemo_map_pref";
-
   const FIT_MODE_KEY = "geonemo_fit_mode"; // "area" | "area_point"
 
   const el = {
-    map: document.getElementById("map"),
     toast: document.getElementById("toast"),
 
     btnBack: document.getElementById("btnBack"),
-    btnFit: document.getElementById("btnFit"),
-
     btnDownloads: document.getElementById("btnDownloads"),
     downloadsMenu: document.getElementById("downloadsMenu"),
     btnDownloadJSON: document.getElementById("btnDownloadJSON"),
     btnDownloadSelectedGeoJSON: document.getElementById("btnDownloadSelectedGeoJSON"),
     btnCopyLink: document.getElementById("btnCopyLink"),
 
-    kpiStatus: document.getElementById("kpiStatus"),
-    kpiDist: document.getElementById("kpiDist"),
-    kpiLayer: document.getElementById("kpiLayer"),
-    btnEvidence: document.getElementById("btnEvidence"),
-    btnTech: document.getElementById("btnTech"),
-    techBox: document.getElementById("techBox"),
-    techUpdated: document.getElementById("techUpdated"),
-    techClick: document.getElementById("techClick"),
-    techBbox: document.getElementById("techBbox"),
-
-    // Estadígrafos (de tu HTML)
-    metDistBorde: document.getElementById("metDistBorde"),
-    metDistCentroid: document.getElementById("metDistCentroid"),
-    metDiamEq: document.getElementById("metDiamEq"),
-    metCentroidDD: document.getElementById("metCentroidDD"),
-    metCentroidDMS: document.getElementById("metCentroidDMS"),
-    metArea: document.getElementById("metArea"),
-
-    layersCount: document.getElementById("layersCount"),
-    layersList: document.getElementById("layersList"),
-
-    attrsBox: document.getElementById("attrsBox"),
+    groupsCount: document.getElementById("groupsCount"),
+    groupsWrap: document.getElementById("groupsWrap"),
   };
 
   let payload = null;
-  let map = null;
-  let pointMarker = null;
-  let polyLayer = null;
-  let selectedLayerId = null;
+
+  // maps por grupo
+  const groupMaps = new Map(); // groupId -> { map, polyLayer, pointMarker, tagLayer }
+  let activeGroupId = null;    // grupo "activo" (para descarga GeoJSON)
 
   function showToast(msg) {
     if (!el.toast) return;
@@ -80,47 +56,27 @@
     return `${m2s} m² · ${has} ha · ${km2s} km²`;
   }
 
-  function readMapPref(){
+  function readMapPref() {
     try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
     catch { return {}; }
   }
 
   function readFitMode() {
-  const v = String(localStorage.getItem(FIT_MODE_KEY) || "").toLowerCase();
-  return (v === "area" || v === "area_point") ? v : "area_point"; // default recomendado
-}
-
-function writeFitMode(v) {
-  const mode = (v === "area" || v === "area_point") ? v : "area_point";
-  localStorage.setItem(FIT_MODE_KEY, mode);
-  return mode;
-}
-
-function setFitButtonUI(mode) {
-  if (!el.btnFit) return;
-  if (mode === "area") {
-    el.btnFit.innerHTML = "🎯 ▢";
-    el.btnFit.title = "Centrar: solo área seleccionada";
-  } else {
-    el.btnFit.innerHTML = "🎯 ▢📍";
-    el.btnFit.title = "Centrar: área + punto consultado";
+    const v = String(localStorage.getItem(FIT_MODE_KEY) || "").toLowerCase();
+    return (v === "area" || v === "area_point") ? v : "area_point";
   }
-}
 
-  function dom(tag, attrs = {}, children = []) {
-    const n = document.createElement(tag);
-    Object.entries(attrs).forEach(([k, v]) => {
-      if (k === "class") n.className = v;
-      else if (k === "text") n.textContent = v;
-      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.substring(2), v);
-      else n.setAttribute(k, v);
-    });
-    (Array.isArray(children) ? children : [children]).forEach(c => {
-      if (c === null || c === undefined) return;
-      if (typeof c === "string") n.appendChild(document.createTextNode(c));
-      else n.appendChild(c);
-    });
-    return n;
+  function writeFitMode(v) {
+    const mode = (v === "area" || v === "area_point") ? v : "area_point";
+    localStorage.setItem(FIT_MODE_KEY, mode);
+    return mode;
+  }
+
+  function toggleMenu(forceOpen = null) {
+    if (!el.downloadsMenu) return;
+    const open = forceOpen !== null ? forceOpen : !el.downloadsMenu.classList.contains("open");
+    el.downloadsMenu.classList.toggle("open", open);
+    el.downloadsMenu.setAttribute("aria-hidden", open ? "false" : "true");
   }
 
   function downloadText(filename, text, mime = "application/json") {
@@ -133,13 +89,6 @@ function setFitButtonUI(mode) {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }
-
-  function toggleMenu(forceOpen = null) {
-    if (!el.downloadsMenu) return;
-    const open = forceOpen !== null ? forceOpen : !el.downloadsMenu.classList.contains("open");
-    el.downloadsMenu.classList.toggle("open", open);
-    el.downloadsMenu.setAttribute("aria-hidden", open ? "false" : "true");
   }
 
   function normalizeClick(click) {
@@ -228,20 +177,14 @@ function setFitButtonUI(mode) {
     const out = { ...raw };
     out.updatedAt = out.updatedAt || out.updated_at || new Date().toISOString();
 
-    if (out.click && typeof out.click === "object") {
-      if (out.click.lng === undefined && out.click.lon !== undefined) {
-        out.click = { ...out.click, lng: out.click.lon };
-      }
-    }
-
-    // convertir bbox objeto -> array si viene así
+    // bbox objeto -> array
     if (out.bbox && typeof out.bbox === "object" && !Array.isArray(out.bbox)) {
       const w = Number(out.bbox.west), s = Number(out.bbox.south),
-            e = Number(out.bbox.east), n = Number(out.bbox.north);
+        e = Number(out.bbox.east), n = Number(out.bbox.north);
       if ([w, s, e, n].every(Number.isFinite)) out.bbox = [w, s, e, n];
     }
 
-    // links[] -> layers[]
+    // links[] -> layers[] (compat)
     if (!Array.isArray(out.layers) && Array.isArray(out.links)) {
       out.layers = out.links.map((link, i) => {
         const status = canonicalStatusFromLinkType(link.link_type || link.status);
@@ -253,12 +196,10 @@ function setFitButtonUI(mode) {
           status,
           rawStatus: String(link.link_type || link.status || "").toLowerCase(),
 
-          // Distancia de dictamen (inside=0, prox=distancia)
           distanceM: (link.distance_km != null && isFinite(link.distance_km))
             ? Number(link.distance_km) * 1000
             : (link.distance_m != null ? Number(link.distance_m) : null),
 
-          // ✅ NUEVO: distancia al borde (estadígrafos)
           borderDistanceM: (link.distance_border_m != null && isFinite(link.distance_border_m))
             ? Number(link.distance_border_m)
             : null,
@@ -272,20 +213,56 @@ function setFitButtonUI(mode) {
     return out;
   }
 
-  function initMap(click) {
-    map = L.map("map", { zoomControl: true, attributionControl: true });
+  function dom(tag, attrs = {}, children = []) {
+    const n = document.createElement(tag);
+    Object.entries(attrs).forEach(([k, v]) => {
+      if (k === "class") n.className = v;
+      else if (k === "text") n.textContent = v;
+      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.substring(2), v);
+      else n.setAttribute(k, v);
+    });
+    (Array.isArray(children) ? children : [children]).forEach(c => {
+      if (c === null || c === undefined) return;
+      if (typeof c === "string") n.appendChild(document.createTextNode(c));
+      else n.appendChild(c);
+    });
+    return n;
+  }
 
-    const topoBase = L.tileLayer(
-      "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-      {
-        maxZoom: 17,
-        subdomains: "abc",
-        opacity: 1.0,
-        attribution: "Map data: &copy; OpenStreetMap contributors, SRTM | OpenTopoMap",
-        crossOrigin: true,
-        updateWhenIdle: true
-      }
-    );
+  function renderAttrs(boxEl, obj) {
+    if (!boxEl) return;
+    boxEl.innerHTML = "";
+
+    if (!obj || typeof obj !== "object" || !Object.keys(obj).length) {
+      boxEl.appendChild(dom("div", { class: "muted", text: "Sin atributos." }));
+      return;
+    }
+
+    const table = dom("table", { class: "attrTable" });
+    Object.keys(obj).sort().forEach((k) => {
+      const tr = dom("tr");
+      tr.appendChild(dom("td", { class: "k", text: safeText(k) }));
+      tr.appendChild(dom("td", { class: "v", text: safeText(obj[k]) }));
+      table.appendChild(tr);
+    });
+    boxEl.appendChild(table);
+  }
+
+  /* =========================
+     Map por grupo
+  ========================= */
+
+  function createLeafletMap(divId, click) {
+    const map = L.map(divId, { zoomControl: true, attributionControl: true });
+
+    const topoBase = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+      maxZoom: 17,
+      subdomains: "abc",
+      opacity: 1.0,
+      attribution: "Map data: &copy; OpenStreetMap contributors, SRTM | OpenTopoMap",
+      crossOrigin: true,
+      updateWhenIdle: true
+    });
 
     const satOverlay = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -300,11 +277,19 @@ function setFitButtonUI(mode) {
 
     const pref = readMapPref();
     topoBase.addTo(map);
-
     const wantSat = (pref.overlay === "Esri Satélite") || (pref.overlay == null);
     if (wantSat) satOverlay.addTo(map);
 
-    polyLayer = L.geoJSON(null, {
+    const latlng = click ? [click.lat, click.lng] : [-24.5, -70.55];
+    const pointMarker = L.circleMarker(latlng, {
+      radius: 8,
+      weight: 2,
+      color: "#ffffff",
+      fillColor: "#2dd4bf",
+      fillOpacity: 0.95,
+    }).addTo(map);
+
+    const polyLayer = L.geoJSON(null, {
       style: () => ({
         color: "#38bdf8",
         weight: 2,
@@ -313,19 +298,11 @@ function setFitButtonUI(mode) {
       }),
     }).addTo(map);
 
-    const latlng = click ? [click.lat, click.lng] : [-24.5, -70.55];
-    pointMarker = L.circleMarker(latlng, {
-      radius: 8,
-      weight: 2,
-      color: "#ffffff",
-      fillColor: "#2dd4bf",
-      fillOpacity: 0.95,
-    }).addTo(map);
-
     map.setView(latlng, 10);
+    return { map, pointMarker, polyLayer };
   }
 
-  function setPolygonOnMap(gj) {
+  function setPolygon(polyLayer, gj) {
     if (!polyLayer) return;
     polyLayer.clearLayers();
     const fc = toFeatureCollection(gj);
@@ -333,263 +310,321 @@ function setFitButtonUI(mode) {
     polyLayer.addData(fc);
   }
 
-function fitToContext() {
-  if (!map) return;
-
-  const mode = readFitMode(); // "area" | "area_point"
-
-  try {
-    // 1) Si hay polígono: fit a área (y opcionalmente punto)
-    if (polyLayer && polyLayer.getLayers().length) {
-      const b = polyLayer.getBounds();
-      if (b && b.isValid()) {
-        if (mode === "area_point" && pointMarker) {
-          b.extend(pointMarker.getLatLng()); // ✅ incluye el punto
+  function fitToContext(mapObj, layerObj, click) {
+    const { map, polyLayer, pointMarker } = mapObj;
+    const mode = readFitMode(); // "area" | "area_point"
+    try {
+      if (polyLayer && polyLayer.getLayers().length) {
+        const b = polyLayer.getBounds();
+        if (b && b.isValid()) {
+          if (mode === "area_point" && pointMarker) b.extend(pointMarker.getLatLng());
+          map.fitBounds(b.pad(0.12));
+          return;
         }
-        map.fitBounds(b.pad(0.12));
-        return;
       }
+      if (click && pointMarker) map.setView(pointMarker.getLatLng(), 11);
+    } catch (e) {
+      console.warn("fitToContext:", e);
     }
-
-    // 2) Si no hay polígono, usar bbox
-    if (payload?.bbox && Array.isArray(payload.bbox) && payload.bbox.length === 4) {
-      const [w, s, e, n] = payload.bbox.map(Number);
-      if ([w, s, e, n].every(Number.isFinite)) {
-        map.fitBounds([[s, w], [n, e]], { padding: [30, 30] });
-        return;
-      }
-    }
-
-    // 3) Fallback al punto
-    if (pointMarker) map.setView(pointMarker.getLatLng(), 11);
-  } catch (err) {
-    console.warn("fitToContext error:", err);
-  }
-}
-
-  function setMetricsEmpty() {
-    if (el.metDistBorde) el.metDistBorde.textContent = "—";
-    if (el.metDistCentroid) el.metDistCentroid.textContent = "—";
-    if (el.metDiamEq) el.metDiamEq.textContent = "—";
-    if (el.metCentroidDD) el.metCentroidDD.textContent = "—";
-    if (el.metCentroidDMS) el.metCentroidDMS.textContent = "—";
-    if (el.metArea) el.metArea.textContent = "—";
   }
 
-  function updateMetricsForSelectedPolygon(layer) {
-    // Distancia mínima al borde (primero)
+  function computeMetrics(layer, click) {
+    const out = {
+      distBorde: "—",
+      distCentroid: "—",
+      diamEq: "—",
+      centroidDD: "—",
+      centroidDMS: "—",
+      area: "—",
+    };
+
+    // borde desde payload (si viene)
     const dB = (layer?.borderDistanceM != null) ? layer.borderDistanceM : null;
-    if (el.metDistBorde) el.metDistBorde.textContent = fmtDist(dB);
+    if (dB != null) out.distBorde = fmtDist(dB);
 
-    // Resto requiere Turf + polígono
-    if (!window.turf || !layer || !hasGeoJSON(layer.polygon)) {
-      // mantenemos borde ya seteado (si lo hay), y el resto en —
-      if (el.metDistCentroid) el.metDistCentroid.textContent = "—";
-      if (el.metDiamEq) el.metDiamEq.textContent = "—";
-      if (el.metCentroidDD) el.metCentroidDD.textContent = "—";
-      if (el.metCentroidDMS) el.metCentroidDMS.textContent = "—";
-      if (el.metArea) el.metArea.textContent = "—";
-      return;
-    }
+    if (!window.turf || !layer || !hasGeoJSON(layer.polygon)) return out;
 
     try {
       const fc = toFeatureCollection(layer.polygon);
       const feat = fc?.features?.[0];
-      if (!feat) return;
+      if (!feat) return out;
 
       const areaM2 = turf.area(feat);
+      out.area = fmtArea(areaM2);
 
       const c = turf.centroid(feat);
       const lon = c?.geometry?.coordinates?.[0];
       const lat = c?.geometry?.coordinates?.[1];
 
-      const click = normalizeClick(payload?.click);
-      let distCentroidM = null;
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        out.centroidDD = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+        out.centroidDMS = `${ddToDms(lat, true)} · ${ddToDms(lon, false)}`;
+      }
+
+      // dist centroide
       if (click && Number.isFinite(lat) && Number.isFinite(lon)) {
         const pClick = turf.point([click.lng, click.lat]);
         const pC = turf.point([lon, lat]);
-        distCentroidM = turf.distance(pClick, pC, { units: "kilometers" }) * 1000;
+        const distM = turf.distance(pClick, pC, { units: "kilometers" }) * 1000;
+        out.distCentroid = fmtDist(distM);
       }
 
-      const diamM = (Number.isFinite(areaM2) && areaM2 > 0)
-        ? (2 * Math.sqrt(areaM2 / Math.PI))
-        : null;
-
-      if (el.metArea) el.metArea.textContent = fmtArea(areaM2);
-      if (el.metDistCentroid) el.metDistCentroid.textContent = fmtDist(distCentroidM);
-
-      if (el.metDiamEq) {
-        if (diamM == null || !Number.isFinite(diamM)) el.metDiamEq.textContent = "—";
-        else el.metDiamEq.textContent = (diamM < 1000)
-          ? `${Math.round(diamM)} m`
-          : `${(diamM/1000).toFixed(2)} km`;
-      }
-
-      if (el.metCentroidDD) {
-        if (Number.isFinite(lat) && Number.isFinite(lon)) {
-          el.metCentroidDD.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
-        } else el.metCentroidDD.textContent = "—";
-      }
-
-      if (el.metCentroidDMS) {
-        if (Number.isFinite(lat) && Number.isFinite(lon)) {
-          const latDms = ddToDms(lat, true);
-          const lonDms = ddToDms(lon, false);
-          el.metCentroidDMS.textContent = `${latDms} · ${lonDms}`;
-        } else el.metCentroidDMS.textContent = "—";
+      // diámetro equivalente
+      const diamM = (Number.isFinite(areaM2) && areaM2 > 0) ? (2 * Math.sqrt(areaM2 / Math.PI)) : null;
+      if (diamM != null && Number.isFinite(diamM)) {
+        out.diamEq = (diamM < 1000) ? `${Math.round(diamM)} m` : `${(diamM / 1000).toFixed(2)} km`;
       }
 
     } catch (e) {
-      console.warn("updateMetricsForSelectedPolygon:", e);
+      console.warn("computeMetrics:", e);
+    }
+
+    return out;
+  }
+
+  /* =========================
+     Render por grupo
+  ========================= */
+
+  function setActiveGroup(groupId) {
+    activeGroupId = groupId;
+    // marca visual (opcional): borde del head
+    document.querySelectorAll(".groupCard").forEach(card => {
+      card.classList.toggle("isActive", card.getAttribute("data-group-id") === groupId);
+    });
+
+    // botón download GeoJSON depende del grupo activo con polígono
+    if (el.btnDownloadSelectedGeoJSON) {
+      const layer = getLayerById(groupId);
+      el.btnDownloadSelectedGeoJSON.disabled = !(layer && hasGeoJSON(layer.polygon));
     }
   }
 
-  function renderAttrs(obj) {
-    if (!el.attrsBox) return;
-    el.attrsBox.innerHTML = "";
-
-    if (!obj || typeof obj !== "object" || !Object.keys(obj).length) {
-      el.attrsBox.appendChild(dom("div", { class: "muted", text: "Sin atributos." }));
-      return;
-    }
-
-    const table = dom("table", { class: "attrTable" });
-    Object.keys(obj).sort().forEach((k) => {
-      const tr = dom("tr");
-      tr.appendChild(dom("td", { class: "k", text: safeText(k) }));
-      tr.appendChild(dom("td", { class: "v", text: safeText(obj[k]) }));
-      table.appendChild(tr);
-    });
-    el.attrsBox.appendChild(table);
-  }
-
-  function setActiveRow(id) {
-    if (!el.layersList) return;
-    [...el.layersList.querySelectorAll(".layerRow")].forEach(r => {
-      r.classList.toggle("active", r.getAttribute("data-id") === id);
-    });
-  }
-
-  function getLayerById(id) {
+  function getLayerById(groupId) {
     const layers = Array.isArray(payload?.layers) ? payload.layers : [];
-    return layers.find(l => l.__id === id) || null;
+    return layers.find(l => String(l.id) === String(groupId)) || null;
   }
 
-  function selectLayer(id, opts = { zoom: true }) {
-    const layer = getLayerById(id);
-    if (!layer) return;
+  function renderGroupCard(layer, click, idx) {
+    const groupId = String(layer?.id ?? `group_${idx}`);
+    const name = safeText(layer?.name || "Grupo");
+    const status = safeText(layer?.status || "none");
+    const badgeMini = rowBadgeMini(status);
 
-    selectedLayerId = id;
-    setActiveRow(id);
+    const distShownM = (layer?.borderDistanceM != null) ? layer.borderDistanceM : layer?.distanceM;
+    const distText = fmtDist(distShownM);
 
-    const hasPoly = hasGeoJSON(layer.polygon);
-    if (el.btnDownloadSelectedGeoJSON) el.btnDownloadSelectedGeoJSON.disabled = !hasPoly;
+    const b = statusToBadge(status);
 
+    const mapDivId = `map_${groupId.replace(/[^a-zA-Z0-9_:-]/g, "_")}_${idx}`;
+
+    // Head
+    const head = dom("div", { class: "groupHead" }, [
+      dom("div", { class: "groupTitle" }, [
+        dom("div", { class: "groupTitle__name", text: name }),
+        dom("div", { class: "groupTitle__sub", text: `Dist.: ${distText}` }),
+      ]),
+      dom("div", { class: "groupMeta" }, [
+        dom("span", { class: `badgeMini ${badgeMini.cls}`, text: badgeMini.label }),
+        dom("span", { class: "badge " + b.cls, text: b.label }),
+        dom("span", { class: "groupChevron", text: "▾" }),
+      ])
+    ]);
+
+    // Body
+    const mapHeadRight = dom("div", { class: "right" }, [
+      dom("button", {
+        class: "btn btn--ghost btnSm",
+        type: "button",
+        title: "Centrar (área / área+punto)",
+        onclick: (ev) => {
+          ev.stopPropagation();
+          const cur = readFitMode();
+          const next = (cur === "area_point") ? "area" : "area_point";
+          const mode = writeFitMode(next);
+          showToast(mode === "area" ? "Vista: área" : "Vista: área + punto");
+          const gm = groupMaps.get(groupId);
+          if (gm) fitToContext(gm, layer, click);
+        }
+      }, "🎯"),
+      dom("button", {
+        class: "btn btn--ghost btnSm",
+        type: "button",
+        title: "Ajustar vista",
+        onclick: (ev) => {
+          ev.stopPropagation();
+          const gm = groupMaps.get(groupId);
+          if (gm) fitToContext(gm, layer, click);
+        }
+      }, "⤢"),
+    ]);
+
+    const mapCard = dom("div", { class: "groupMapCard" }, [
+      dom("div", { class: "groupMapHead" }, [
+        dom("div", { class: "left", text: "Mapa del grupo" }),
+        mapHeadRight,
+      ]),
+      dom("div", { id: mapDivId, class: "groupMap" }),
+    ]);
+
+    const side = dom("div", { class: "groupSide" });
+    const metrics = computeMetrics(layer, click);
+
+    const kpis = dom("div", { class: "groupKpis" }, [
+      dom("div", { class: "kpi" }, [
+        dom("div", { class: "kpi__label", text: "Estado" }),
+        dom("div", { class: `badge ${b.cls}`, text: b.label }),
+      ]),
+      dom("div", { class: "kpi" }, [
+        dom("div", { class: "kpi__label", text: "Distancia mínima" }),
+        dom("div", { class: "kpi__value", text: distText }),
+      ]),
+      dom("div", { class: "kpi kpiFull" }, [
+        dom("div", { class: "kpi__label", text: "Grupo" }),
+        dom("div", { class: "kpi__value", text: name }),
+      ]),
+
+      // Estadígrafos (bloque simple, mantenible)
+      dom("div", { class: "kpi kpiFull" }, [
+        dom("div", { class: "kpi__label", text: "Estadígrafos" }),
+        dom("div", { class: "muted", text: "Geometría" }),
+        dom("div", { class: "kpi__value", text: `Dist. borde: ${metrics.distBorde} · Diám. eq: ${metrics.diamEq}` }),
+        dom("div", { class: "muted", style: "margin-top:6px;", text: "Localización" }),
+        dom("div", { class: "kpi__value", text: `${metrics.centroidDD}` }),
+        dom("div", { class: "kpi__value muted", text: `${metrics.centroidDMS}` }),
+        dom("div", { class: "muted", style: "margin-top:6px;", text: "Magnitudes" }),
+        dom("div", { class: "kpi__value", text: `Dist. centroide: ${metrics.distCentroid}` }),
+        dom("div", { class: "kpi__value", text: `Área: ${metrics.area}` }),
+      ]),
+    ]);
+
+    side.appendChild(kpis);
+
+    // Atributos (del feature si existe)
+    const attrsBox = dom("div", { class: "groupAttrs" }, [
+      dom("div", { class: "muted", text: "Atributos" }),
+      dom("div", { class: "attrsInner" }),
+    ]);
+    side.appendChild(attrsBox);
+
+    // resolve props
     let props = null;
     if (layer.polygon && layer.polygon.type === "Feature" && layer.polygon.properties) props = layer.polygon.properties;
     else props = layer.properties || null;
-    renderAttrs(props);
+    renderAttrs(attrsBox.querySelector(".attrsInner"), props);
 
-    if (hasPoly) {
-      setPolygonOnMap(layer.polygon);
-      if (opts.zoom) fitToContext();
-      showToast("Polígono seleccionado.");
-    } else {
-      if (polyLayer) polyLayer.clearLayers();
-      if (opts.zoom) fitToContext();
-      showToast("Sin polígono asociado (sin match).");
-    }
+    const grid = dom("div", { class: "groupGrid" }, [mapCard, side]);
 
-    if (el.kpiLayer) el.kpiLayer.textContent = safeText(layer.name || "—");
-    const dMinBorde = (layer?.borderDistanceM != null) ? layer.borderDistanceM : layer.distanceM;
-    if (el.kpiDist) el.kpiDist.textContent = fmtDist(dMinBorde);
+    const body = dom("div", { class: "groupBody" }, [grid]);
 
-    if (el.kpiStatus) {
-      const b2 = statusToBadge(layer.status);
-      el.kpiStatus.className = `badge ${b2.cls}`;
-      el.kpiStatus.textContent = b2.label;
-    }
+    const card = dom("div", { class: "groupCard", "data-group-id": groupId }, [head, body]);
 
-    updateMetricsForSelectedPolygon(layer);
+    // colapsable
+    head.addEventListener("click", () => {
+      const isHidden = body.classList.toggle("isHidden");
+      head.querySelector(".groupChevron").textContent = isHidden ? "▸" : "▾";
+
+      // al expandir: asegurar mapa inicializado y calzar
+      if (!isHidden) {
+        setActiveGroup(groupId);
+        ensureGroupMap(groupId, mapDivId, layer, click, name);
+        requestAnimationFrame(() => {
+          const gm = groupMaps.get(groupId);
+          if (gm) {
+            gm.map.invalidateSize(true);
+            fitToContext(gm, layer, click);
+          }
+        });
+      }
+    });
+
+    // al hacer foco activo (sin colapsar)
+    card.addEventListener("mouseenter", () => setActiveGroup(groupId));
+
+    // init default (no-lazy) para el primer grupo: simple
+    return { card, groupId, mapDivId };
   }
 
-  function renderTopKPIs() {
-    if (!payload) return;
-    const layers = Array.isArray(payload.layers) ? payload.layers : [];
+  function ensureGroupMap(groupId, mapDivId, layer, click, groupName) {
+    if (groupMaps.has(groupId)) return;
 
-    // tech
-    if (el.techUpdated) el.techUpdated.textContent = safeText(payload.updatedAt || "—");
-    const click = normalizeClick(payload.click);
-    if (el.techClick) el.techClick.textContent = click ? `${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}` : "—";
+    const mapObj = createLeafletMap(mapDivId, click);
+    groupMaps.set(groupId, mapObj);
 
-    if (el.techBbox) {
-      if (payload?.bbox && Array.isArray(payload.bbox) && payload.bbox.length === 4) {
-        const [w, s, e, n] = payload.bbox;
-        el.techBbox.textContent = `${Number(w).toFixed(3)}, ${Number(s).toFixed(3)} — ${Number(e).toFixed(3)}, ${Number(n).toFixed(3)}`;
-      } else {
-        el.techBbox.textContent = "—";
-      }
+    // polígono
+    if (layer && hasGeoJSON(layer.polygon)) {
+      setPolygon(mapObj.polyLayer, layer.polygon);
+
+      // etiqueta (tooltip) para UX: nombre del grupo
+      try {
+        const fc = toFeatureCollection(layer.polygon);
+        const feat = fc?.features?.[0];
+        if (feat && window.turf) {
+          const c = turf.centroid(feat);
+          const lon = c?.geometry?.coordinates?.[0];
+          const lat = c?.geometry?.coordinates?.[1];
+          if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            L.marker([lat, lon], { opacity: 0.0 })
+              .addTo(mapObj.map)
+              .bindTooltip(groupName, { permanent: true, direction: "center", className: "groupTag" })
+              .openTooltip();
+          }
+        }
+      } catch (_) {}
     }
 
-    setMetricsEmpty();
-
-    if (layers.length) {
-      const best = layers.find(l => hasGeoJSON(l.polygon)) || layers[0];
-      if (el.kpiLayer) el.kpiLayer.textContent = safeText(best?.name || "—");
-      if (el.kpiDist) el.kpiDist.textContent = fmtDist(best?.distanceM ?? null);
-      if (el.kpiStatus) {
-        const b = statusToBadge(best?.status);
-        el.kpiStatus.className = `badge ${b.cls}`;
-        el.kpiStatus.textContent = b.label;
-      }
-    }
+    fitToContext(mapObj, layer, click);
   }
 
-  function renderLayers() {
+  function renderAllGroups() {
+    if (!el.groupsWrap) return;
+
     const layers = Array.isArray(payload?.layers) ? payload.layers : [];
-    if (el.layersCount) el.layersCount.textContent = String(layers.length || 0);
-    if (!el.layersList) return;
+    el.groupsWrap.innerHTML = "";
 
-    el.layersList.innerHTML = "";
+    if (el.groupsCount) el.groupsCount.textContent = String(layers.length || 0);
 
     if (!layers.length) {
-      el.layersList.appendChild(dom("div", { class: "muted", text: "Sin capas en el resultado." }));
+      el.groupsWrap.appendChild(dom("div", { class: "muted", text: "Sin grupos en el resultado." }));
       return;
     }
 
-    layers.forEach((layer, idx) => {
-      const id = safeText(layer.id || layer.name || `layer_${idx}`);
-      layer.__id = id;
+    const click = normalizeClick(payload?.click);
 
-      const badge = rowBadgeMini(layer.status);
-      const dist = fmtDist(layer.distanceM);
+    // orden: inside primero, luego prox, luego otros
+    const score = (s) => {
+      s = String(s || "").toLowerCase();
+      if (["in", "inside", "within", "edge", "onedge"].includes(s)) return 0;
+      if (["prox", "proximity", "buffer", "zam", "nearest_perimeter"].includes(s)) return 1;
+      if (["out", "outside", "fuera"].includes(s)) return 2;
+      return 3;
+    };
 
-      const row = dom("div", { class: "layerRow", "data-id": id });
-      const left = dom("div", { class: "layerRow__left" }, [
-        dom("div", { class: "layerRow__name", text: safeText(layer.name || "Capa") }),
-        dom("div", { class: "layerRow__meta" }, [
-          dom("span", { class: `badgeMini ${badge.cls}`, text: badge.label }),
-          dom("span", { class: "small", text: `Dist.: ${dist}` }),
-        ]),
-      ]);
+    const sorted = [...layers].sort((a, b) => score(a.status) - score(b.status));
 
-      const right = dom("div", { class: "layerRow__right" }, [
-        dom("button", {
-          class: "iconBtn",
-          title: "Zoom/centrar",
-          onclick: (ev) => { ev.stopPropagation(); selectLayer(id, { zoom: true }); }
-        }, "⤢"),
-        dom("button", {
-          class: "iconBtn",
-          title: "Atributos",
-          onclick: (ev) => { ev.stopPropagation(); selectLayer(id, { zoom: false }); }
-        }, "≡"),
-      ]);
+    const rendered = sorted.map((layer, idx) => renderGroupCard(layer, click, idx));
+    rendered.forEach(r => el.groupsWrap.appendChild(r.card));
 
-      row.append(left, right);
-      row.addEventListener("click", () => selectLayer(id, { zoom: true }));
-      el.layersList.appendChild(row);
-    });
+    // activar 1er grupo y crear su mapa
+    const first = rendered[0];
+    if (first) {
+      setActiveGroup(first.groupId);
+      ensureGroupMap(first.groupId, first.mapDivId, getLayerById(first.groupId), click, getLayerById(first.groupId)?.name || "Grupo");
+      // (ya está expandido por defecto) => NO: lo dejamos abierto para UX:
+      const body = first.card.querySelector(".groupBody");
+      const chev = first.card.querySelector(".groupChevron");
+      if (body) body.classList.remove("isHidden");
+      if (chev) chev.textContent = "▾";
+      requestAnimationFrame(() => {
+        const gm = groupMaps.get(first.groupId);
+        if (gm) {
+          gm.map.invalidateSize(true);
+          fitToContext(gm, getLayerById(first.groupId), click);
+        }
+      });
+    }
+
+    showToast("Resultado cargado.");
   }
 
   function wireEvents() {
@@ -600,19 +635,9 @@ function fitToContext() {
       });
     }
 
-    if (el.btnFit) {
-      el.btnFit.addEventListener("click", () => {
-        const cur = readFitMode();
-        const next = (cur === "area_point") ? "area" : "area_point";
-        const mode = writeFitMode(next);
-        setFitButtonUI(mode);
-        fitToContext();
-        showToast(mode === "area" ? "Vista: área" : "Vista: área + punto");
-      });
-   }
-
     if (el.btnDownloads) el.btnDownloads.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
     document.addEventListener("click", () => toggleMenu(false));
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") toggleMenu(false); });
 
     if (el.btnDownloadJSON) {
       el.btnDownloadJSON.addEventListener("click", () => {
@@ -625,10 +650,14 @@ function fitToContext() {
     if (el.btnDownloadSelectedGeoJSON) {
       el.btnDownloadSelectedGeoJSON.addEventListener("click", () => {
         toggleMenu(false);
-        const layer = selectedLayerId ? getLayerById(selectedLayerId) : null;
+        const layer = activeGroupId ? getLayerById(activeGroupId) : null;
         if (!layer || !hasGeoJSON(layer.polygon)) return;
         const fc = toFeatureCollection(layer.polygon);
-        downloadText(`geonemo_poligono_${(layer.__id || "seleccion")}.geojson`, JSON.stringify(fc, null, 2), "application/geo+json");
+        downloadText(
+          `geonemo_poligono_${String(layer.id || "grupo")}.geojson`,
+          JSON.stringify(fc, null, 2),
+          "application/geo+json"
+        );
         showToast("Descargando GeoJSON…");
       });
     }
@@ -647,25 +676,6 @@ function fitToContext() {
         catch { showToast("No se pudo copiar (permiso navegador)."); }
       });
     }
-
-    if (el.btnEvidence) {
-      el.btnEvidence.addEventListener("click", () => {
-        const card = document.getElementById("layersList")?.closest(".card");
-        if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    }
-
-    if (el.btnTech && el.techBox) {
-      el.btnTech.addEventListener("click", () => {
-        const hidden = el.techBox.classList.contains("tech--hidden");
-        el.techBox.classList.toggle("tech--hidden", !hidden);
-        el.btnTech.textContent = hidden ? "Ocultar detalles" : "Detalles técnicos";
-      });
-    }
-
-    document.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") toggleMenu(false);
-    });
   }
 
   function renderNoPayload() {
@@ -689,29 +699,10 @@ function fitToContext() {
       return;
     }
 
-    const click = normalizeClick(payload.click);
-    initMap(click);
-    setFitButtonUI(readFitMode());
-
-    renderTopKPIs();
-    renderLayers();
-
-    const layers = Array.isArray(payload.layers) ? payload.layers : [];
-    const best = layers.find(l => hasGeoJSON(l.polygon)) || layers[0];
-
-    // __id se setea en renderLayers
-    setTimeout(() => {
-      if (best && best.__id) selectLayer(best.__id, { zoom: false });
-      else if (best && best.id) selectLayer(String(best.id), { zoom: false });
-    }, 0);
-
-    setTimeout(() => {
-      if (map) map.invalidateSize(true);
-      fitToContext();
-    }, 180);
-
     wireEvents();
-    showToast("Resultado cargado.");
+
+    // si no hay turf, igual renderiza (solo sin métricas avanzadas)
+    renderAllGroups();
   }
 
   window.addEventListener("load", boot);

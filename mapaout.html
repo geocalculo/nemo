@@ -42,147 +42,20 @@
 
   <main class="shell">
     <!-- fila superior: mapa + dictamen -->
-    <section class="gridTop">
-      <div class="card mapCard" aria-label="Mapa">
-        <div class="cardHead">
-          <div class="cardTitle">Mapa</div>
-          <div class="cardHead__right">
-            <button id="btnFit" class="btn btn--ghost btnSm" type="button" title="Ajustar vista">⤢ Ajustar</button>
-          </div>
-        </div>
-
-        <div class="mapFrame">
-          <div id="map"></div>
-
-          <div class="legend">
-            <div class="legend__title">Leyenda</div>
-            <div class="legend__row"><span class="swatch swatch--point"></span> Punto consultado</div>
-            <div class="legend__row"><span class="swatch swatch--poly"></span> Polígono seleccionado</div>
-          </div>
-
-          <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
-        </div>
-      </div>
-
-      <div class="card sideCard" aria-label="Resumen">
-        <div class="cardHead">
-          <div class="cardTitle">Dictamen</div>
-        </div>
-
-        <div class="kpiGrid">
-          <div class="kpi">
-            <div class="kpi__label">Estado</div>
-            <div id="kpiStatus" class="badge badge--neutral">—</div>
-          </div>
-
-          <div class="kpi">
-            <div class="kpi__label">Distancia mínima</div>
-            <div id="kpiDist" class="kpi__value">—</div>
-          </div>
-
-          <div class="kpi kpiFull">
-            <div class="kpi__label">Capa dominante</div>
-            <div id="kpiLayer" class="kpi__value">—</div>
-          </div>
-
-          <div class="rowBtns kpiFull">
-            <button id="btnEvidence" class="btn btn--primary" type="button">Ver evidencia</button>
-            <button id="btnTech" class="btn btn--ghost" type="button">Detalles técnicos</button>
-          </div>
-
-          <div id="techBox" class="tech tech--hidden kpiFull">
-            <div class="tech__grid">
-              <div><div class="tech__k">Actualizado</div><div id="techUpdated" class="tech__v">—</div></div>
-              <div><div class="tech__k">Clic</div><div id="techClick" class="tech__v">—</div></div>
-              <div><div class="tech__k">BBOX</div><div id="techBbox" class="tech__v">—</div></div>
-              <div><div class="tech__k">Key localStorage</div><div class="tech__v"><code>geonemo_out_v2</code></div></div>
-            </div>
-          </div>
-
-          <!-- ✅ NUEVO: Estadígrafos (agrupados) -->
-          <div class="kpiFull metBlock" style="margin-top:10px;">
-            <div class="cardHead" style="padding:0; margin:0 0 8px 0;">
-              <div class="cardTitle" style="font-size:14px; opacity:.9;">Estadígrafos</div>
-            </div>
-
-            <div class="metGroups">
-
-              <!-- 📐 Geometría -->
-              <div class="metGroup">
-                <div class="metGroup__title">📐 Geometría</div>
-
-                <div class="metGrid">
-                  <div class="metItem">
-                    <div class="tech__k">Distancia mínima al borde</div>
-                    <div id="metDistBorde" class="tech__v">—</div>
-                  </div>
-
-                  <div class="metItem">
-                    <div class="tech__k">Diámetro equivalente</div>
-                    <div id="metDiamEq" class="tech__v">—</div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 📍 Localización -->
-              <div class="metGroup">
-                <div class="metGroup__title">📍 Localización</div>
-
-                <div class="metGrid">
-                  <div class="metItem">
-                    <div class="tech__k">Centroide (grados decimales)</div>
-                    <div id="metCentroidDD" class="tech__v">—</div>
-                  </div>
-
-                  <div class="metItem">
-                    <div class="tech__k">Centroide (gg:mm:ss)</div>
-                    <div id="metCentroidDMS" class="tech__v">—</div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 📊 Magnitudes -->
-              <div class="metGroup">
-                <div class="metGroup__title">📊 Magnitudes</div>
-
-                <div class="metGrid">
-                  <div class="metItem">
-                    <div class="tech__k">Distancia al centroide</div>
-                    <div id="metDistCentroid" class="tech__v">—</div>
-                  </div>
-
-                  <div class="metItem metItem--full">
-                    <div class="tech__k">Superficie área</div>
-                    <div id="metArea" class="tech__v">—</div>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-          <!-- /Estadígrafos -->
-        </div>
-
-      </div>
-    </section>
-
-    <!-- tabla capas -->
-    <section class="card" aria-label="Vinculación por capas">
+    <section class="card" aria-label="Resultados por grupo">
       <div class="cardHead">
-        <div class="cardTitle">Vinculación por capas</div>
-        <div id="layersCount" class="pill">0</div>
+        <div class="cardTitle">Resultados por grupo</div>
+        <div id="groupsCount" class="pill">0</div>
       </div>
-      <div id="layersList" class="layers"></div>
+
+      <div id="groupsWrap" class="groupsWrap"></div>
+
+      <!-- ✅ Mantengo el toast acá (único, global) -->
+      <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
     </section>
 
-    <!-- atributos -->
-    <section class="card" aria-label="Atributos">
-      <div class="cardHead">
-        <div class="cardTitle">Atributos del polígono seleccionado</div>
-        <div id="attrsHint" class="muted">Selecciona una capa para ver atributos.</div>
-      </div>
-      <div id="attrsBox" class="attrs"><div class="muted">Sin selección.</div></div>
-    </section>
+
+
 
     <div class="footerNote muted">
       * Resultado preliminar de apoyo. No reemplaza pronunciamientos oficiales ni evaluaciones ambientales.
