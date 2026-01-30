@@ -4,6 +4,8 @@
   const STORAGE_KEY = "geonemo_out_v2";
   const MAP_PREF_KEY = "geonemo_map_pref";
 
+  const FIT_MODE_KEY = "geonemo_fit_mode"; // "area" | "area_point"
+
   const el = {
     map: document.getElementById("map"),
     toast: document.getElementById("toast"),
@@ -82,6 +84,28 @@
     try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
     catch { return {}; }
   }
+
+  function readFitMode() {
+  const v = String(localStorage.getItem(FIT_MODE_KEY) || "").toLowerCase();
+  return (v === "area" || v === "area_point") ? v : "area_point"; // default recomendado
+}
+
+function writeFitMode(v) {
+  const mode = (v === "area" || v === "area_point") ? v : "area_point";
+  localStorage.setItem(FIT_MODE_KEY, mode);
+  return mode;
+}
+
+function setFitButtonUI(mode) {
+  if (!el.btnFit) return;
+  if (mode === "area") {
+    el.btnFit.innerHTML = "🎯 ▢";
+    el.btnFit.title = "Centrar: solo área seleccionada";
+  } else {
+    el.btnFit.innerHTML = "🎯 ▢📍";
+    el.btnFit.title = "Centrar: área + punto consultado";
+  }
+}
 
   function dom(tag, attrs = {}, children = []) {
     const n = document.createElement(tag);
@@ -309,25 +333,39 @@
     polyLayer.addData(fc);
   }
 
-  function fitToContext() {
-    if (!map) return;
-    try {
-      if (polyLayer && polyLayer.getLayers().length) {
-        const b = polyLayer.getBounds();
-        if (b.isValid()) { map.fitBounds(b.pad(0.12)); return; }
-      }
-      if (payload?.bbox && Array.isArray(payload.bbox) && payload.bbox.length === 4) {
-        const [w, s, e, n] = payload.bbox.map(Number);
-        if ([w, s, e, n].every(Number.isFinite)) {
-          map.fitBounds([[s, w], [n, e]], { padding: [30, 30] });
-          return;
+function fitToContext() {
+  if (!map) return;
+
+  const mode = readFitMode(); // "area" | "area_point"
+
+  try {
+    // 1) Si hay polígono: fit a área (y opcionalmente punto)
+    if (polyLayer && polyLayer.getLayers().length) {
+      const b = polyLayer.getBounds();
+      if (b && b.isValid()) {
+        if (mode === "area_point" && pointMarker) {
+          b.extend(pointMarker.getLatLng()); // ✅ incluye el punto
         }
+        map.fitBounds(b.pad(0.12));
+        return;
       }
-      if (pointMarker) map.setView(pointMarker.getLatLng(), 11);
-    } catch (err) {
-      console.warn("fitToContext error:", err);
     }
+
+    // 2) Si no hay polígono, usar bbox
+    if (payload?.bbox && Array.isArray(payload.bbox) && payload.bbox.length === 4) {
+      const [w, s, e, n] = payload.bbox.map(Number);
+      if ([w, s, e, n].every(Number.isFinite)) {
+        map.fitBounds([[s, w], [n, e]], { padding: [30, 30] });
+        return;
+      }
+    }
+
+    // 3) Fallback al punto
+    if (pointMarker) map.setView(pointMarker.getLatLng(), 11);
+  } catch (err) {
+    console.warn("fitToContext error:", err);
   }
+}
 
   function setMetricsEmpty() {
     if (el.metDistBorde) el.metDistBorde.textContent = "—";
@@ -463,7 +501,8 @@
     }
 
     if (el.kpiLayer) el.kpiLayer.textContent = safeText(layer.name || "—");
-    if (el.kpiDist) el.kpiDist.textContent = fmtDist(layer.distanceM);
+    const dMinBorde = (layer?.borderDistanceM != null) ? layer.borderDistanceM : layer.distanceM;
+    if (el.kpiDist) el.kpiDist.textContent = fmtDist(dMinBorde);
 
     if (el.kpiStatus) {
       const b2 = statusToBadge(layer.status);
@@ -538,12 +577,12 @@
         dom("button", {
           class: "iconBtn",
           title: "Zoom/centrar",
-          onClick: (ev) => { ev.stopPropagation(); selectLayer(id, { zoom: true }); }
+          onclick: (ev) => { ev.stopPropagation(); selectLayer(id, { zoom: true }); }
         }, "⤢"),
         dom("button", {
           class: "iconBtn",
           title: "Atributos",
-          onClick: (ev) => { ev.stopPropagation(); selectLayer(id, { zoom: false }); }
+          onclick: (ev) => { ev.stopPropagation(); selectLayer(id, { zoom: false }); }
         }, "≡"),
       ]);
 
@@ -561,7 +600,16 @@
       });
     }
 
-    if (el.btnFit) el.btnFit.addEventListener("click", () => fitToContext());
+    if (el.btnFit) {
+      el.btnFit.addEventListener("click", () => {
+        const cur = readFitMode();
+        const next = (cur === "area_point") ? "area" : "area_point";
+        const mode = writeFitMode(next);
+        setFitButtonUI(mode);
+        fitToContext();
+        showToast(mode === "area" ? "Vista: área" : "Vista: área + punto");
+      });
+   }
 
     if (el.btnDownloads) el.btnDownloads.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
     document.addEventListener("click", () => toggleMenu(false));
@@ -643,6 +691,7 @@
 
     const click = normalizeClick(payload.click);
     initMap(click);
+    setFitButtonUI(readFitMode());
 
     renderTopKPIs();
     renderLayers();

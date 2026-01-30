@@ -309,3 +309,50 @@ body{
 .attrTable td.v{color:rgba(255,255,255,.88); font-weight:700; word-break:break-word}
 
 .footerNote{padding: 4px 2px 10px}
+
+/* ===== Estadígrafos agrupados ===== */
+.metGroups{
+  display: grid;
+  gap: 10px;
+}
+
+.metGroup{
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.02);
+}
+
+.metGroup__title{
+  font-size: 12px;
+  opacity: .9;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.metGrid{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.metItem--full{
+  grid-column: 1 / -1;
+}
+
+/* Responsive: en pantallas angostas, 1 columna */
+@media (max-width: 520px){
+  .metGrid{
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Botón centrar (emoji) */
+#btnFit{
+  line-height: 1;
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}

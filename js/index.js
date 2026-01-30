@@ -31,9 +31,8 @@ const OUT_STORAGE_KEY = "geonemo_out_v2";
 const MAP_PREF_KEY = "geonemo_map_pref";
 
 // ✅ Ruta pedida por ti:
-const GROUP_DEFS = [
-  { id: "snaspe", url: "capas/grupo_snaspe.json", enabled: true },
-];
+// ✅ Master de grupos (N grupos en un solo JSON)
+const GROUPS_URL = "capas/grupos.json";
 
 let map;
 let userMarker = null;
@@ -272,23 +271,37 @@ function resolveGroupFileUrl(groupUrl, filePath){
 /* ===========================
    Carga grupo JSON
 =========================== */
-async function loadGroupDefinition(def){
-  const res = await fetch(def.url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`No se pudo cargar ${def.url} (HTTP ${res.status})`);
-  const gj = await res.json();
+/* ===========================
+   Carga MASTER grupos.json
+=========================== */
+async function loadGroupsMaster(url){
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`No se pudo cargar ${url} (HTTP ${res.status})`);
+  const data = await res.json();
 
-  const groupName = gj.group || def.id || "GRUPO";
-  const filesRaw = Array.isArray(gj.files) ? gj.files : [];
-  const files = filesRaw
-    .map(f => resolveGroupFileUrl(def.url, f))
-    .filter(u => /\.geojson$/i.test(u));
+  const groups = Array.isArray(data?.groups) ? data.groups : [];
+  const out = [];
 
-  return {
-    group_id: def.id,
-    group_name: groupName,
-    enabled: def.enabled !== false,
-    files
-  };
+  for (const g of groups){
+    const id = String(g.id || g.group_id || "").trim();
+    if (!id) continue;
+
+    const groupName = String(g.label || g.group || g.name || id).trim();
+
+    const filesRaw = Array.isArray(g.files) ? g.files : [];
+    const files = filesRaw
+      .map(f => resolveGroupFileUrl(url, f))   // ✅ usa helpers que ya tienes
+      .filter(u => /\.geojson$/i.test(u));
+
+    out.push({
+      group_id: id,
+      group_name: groupName,
+      enabled: (g.enabled !== false),
+      files
+    });
+  }
+
+  return out;
 }
 
 /* ===========================
@@ -352,59 +365,91 @@ function scheduleStatsUpdate(){
 
 let GROUPS = [];
 
-async function updateBboxStats(){
+async function updateBboxStats() {
   if (!map) return;
-  if (!assertTurfReady()) { setStatsUI("—","—","—"); return; }
 
-  const g = GROUPS.find(x => x.enabled) || GROUPS[0];
-  if (!g || !g.files?.length) { setStatsUI("—","—","—"); return; }
+  if (!assertTurfReady()) {
+    setStatsUI("—", "—", "—");
+    return;
+  }
+
+  // ✅ Importante: si "enabled" no viene en grupos.json, por defecto queda ACTIVO
+  const activeGroups = (GROUPS || []).filter((g) => g && g.enabled !== false);
+
+  if (!activeGroups.length) {
+    setStatsUI("—", "—", "—");
+    return;
+  }
 
   const b = map.getBounds();
   const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   const bboxPoly = turf.bboxPolygon(bbox);
 
-  let total = 0;
-  let protectedAreaM2 = 0;
+  let total = 0;            // total features que intersectan bbox (sumado en todos los grupos)
+  let protectedAreaM2 = 0;  // área de intersección (m²)
 
-  for (const fileUrl of g.files){
-    let st;
-    try{ st = await ensureFileLoaded(fileUrl); }
-    catch(e){ continue; }
+  for (const g of activeGroups) {
+    const files = Array.isArray(g.files) ? g.files : [];
+    if (!files.length) continue;
 
-    for (const it of (st.featuresIndex || [])){
-      if (!bboxIntersects(it.bbox, bbox)) continue;
-
-      let touches = false;
-      try { touches = turf.booleanIntersects(it.feature, bboxPoly); } catch(_) {}
-      if (!touches) continue;
-
-      total += 1;
-
+    for (const fileUrl of files) {
+      let st;
       try {
-        const inter = turf.intersect(it.feature, bboxPoly);
-        if (inter) protectedAreaM2 += turf.area(inter);
-        else protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
-      } catch(_) {
-        protectedAreaM2 += (isFinite(it.areaM2) ? it.areaM2 : 0);
+        st = await ensureFileLoaded(fileUrl);
+      } catch (e) {
+        console.warn("[GeoNEMO] error loading:", fileUrl, e);
+        continue;
+      }
+
+      const idx = st.featuresIndex || [];
+      if (!idx.length) continue;
+
+      for (const it of idx) {
+        // filtro rápido bbox vs bbox
+        if (!bboxIntersects(it.bbox, bbox)) continue;
+
+        // confirmación geométrica
+        let touches = false;
+        try {
+          touches = turf.booleanIntersects(it.feature, bboxPoly);
+        } catch (_) {}
+        if (!touches) continue;
+
+        total += 1;
+
+        // área: intersección si se puede; fallback a área del feature
+        try {
+          const inter = turf.intersect(it.feature, bboxPoly);
+          if (inter) protectedAreaM2 += turf.area(inter);
+          else protectedAreaM2 += Number.isFinite(it.areaM2) ? it.areaM2 : 0;
+        } catch (_) {
+          protectedAreaM2 += Number.isFinite(it.areaM2) ? it.areaM2 : 0;
+        }
       }
     }
   }
 
+  // UI (3 KPIs: Áreas en BBOX / Total en BBOX / Sup. protegida en BBOX)
   setStatsUI(fmtInt(total), fmtInt(total), fmtArea(protectedAreaM2));
 
+  // Persistencia para mapaout
   const prev = loadOut() || {};
   saveOut({
     ...prev,
     updated_at: nowIso(),
     bbox: { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] },
     stats: {
-      group_id: g.group_id,
-      group_name: g.group_name,
+      scope: "all_enabled_groups",
+      groups_enabled: activeGroups.map((g) => ({
+        group_id: g.group_id || g.id || null,
+        group_name: g.group_name || g.label || g.name || null,
+        files: (g.files || []).length,
+      })),
       areas_bbox: total,
       total_bbox: total,
       protected_area_m2: protectedAreaM2,
-      protected_area_fmt: fmtArea(protectedAreaM2)
-    }
+      protected_area_fmt: fmtArea(protectedAreaM2),
+    },
   });
 }
 
@@ -694,26 +739,22 @@ function bindUI() {
   bindUI();
   await cargarRegiones();
 
-  try{
-    const defs = GROUP_DEFS.filter(d => d.enabled !== false);
-    const loaded = [];
-    for (const d of defs){
-      const g = await loadGroupDefinition(d);
-      loaded.push(g);
-    }
-    GROUPS = loaded;
+  try {
+    // ✅ Carga MASTER: /capas/grupos.json (N grupos en un solo JSON)
+    GROUPS = await loadGroupsMaster(GROUPS_URL);
 
-    if (!GROUPS.length){
+    if (!GROUPS.length) {
       toast("⚠️ No hay grupos cargados", 2600);
     } else {
       toast(`✅ Grupos cargados: ${GROUPS.map(g => g.group_name).join(", ")}`, 2200);
     }
-  } catch(e){
+  } catch (e) {
     console.error(e);
     toast("⚠️ No pude cargar grupos (ver consola)", 2800);
     GROUPS = [];
   }
 
+  // Precarga liviana: primer archivo del primer grupo habilitado
   const firstGroup = GROUPS.find(g => g.enabled) || GROUPS[0];
   const firstFile = firstGroup?.files?.[0];
   if (firstFile) ensureFileLoaded(firstFile).catch(() => {});

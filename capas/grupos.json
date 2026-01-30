@@ -1,0 +1,26 @@
+{
+  "groups": [
+    {
+      "id": "SNASPE",
+      "label": "Sistema Nacional de Áreas Silvestres Protegidas",
+      "description": "Áreas protegidas bajo figuras oficiales del SNASPE",
+      "pick": "best",
+      "enabled": true,
+      "files": [
+        "capas_snaspe/SNASPE_Parque_Nacional.geojson",
+        "capas_snaspe/SNASPE_Reserv_Nacional.geojson",
+        "capas_snaspe/SNASPE_Monumento_Natural.geojson"
+      ]
+    },
+    {
+      "id": "RAMSAR",
+      "label": "Sitios Ramsar",
+      "description": "Humedales de importancia internacional (Convención Ramsar)",
+      "pick": "best",
+      "enabled": true,
+      "files": [
+        "capas_ramsar/Sitios_Grados_RAMSAR.geojson"
+      ]
+    }
+  ]
+}
