@@ -252,55 +252,46 @@
      Map por grupo
   ========================= */
 
-  function createLeafletMap(divId, click) {
-    const map = L.map(divId, { zoomControl: true, attributionControl: true });
+function createLeafletMap(divId, click) {
+  const map = L.map(divId, { zoomControl: true, attributionControl: true });
 
-    const topoBase = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
-      maxZoom: 17,
-      subdomains: "abc",
+  // ✅ BASE SATELITAL 100% (sin OSM/OpenTopoMap debajo)
+  const satBase = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    {
+      name: "Esri Satélite",
+      maxZoom: 19,
       opacity: 1.0,
-      attribution: "Map data: &copy; OpenStreetMap contributors, SRTM | OpenTopoMap",
+      attribution: "Tiles &copy; Esri",
       crossOrigin: true,
       updateWhenIdle: true
-    });
+    }
+  );
 
-    const satOverlay = L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      {
-        maxZoom: 19,
-        opacity: 0.25,
-        attribution: "Tiles &copy; Esri",
-        crossOrigin: true,
-        updateWhenIdle: true
-      }
-    );
+  satBase.addTo(map);
 
-    const pref = readMapPref();
-    topoBase.addTo(map);
-    const wantSat = (pref.overlay === "Esri Satélite") || (pref.overlay == null);
-    if (wantSat) satOverlay.addTo(map);
+  const latlng = click ? [click.lat, click.lng] : [-24.5, -70.55];
+  const pointMarker = L.circleMarker(latlng, {
+    radius: 8,
+    weight: 2,
+    color: "#ffffff",
+    fillColor: "#2dd4bf",
+    fillOpacity: 0.95,
+  }).addTo(map);
 
-    const latlng = click ? [click.lat, click.lng] : [-24.5, -70.55];
-    const pointMarker = L.circleMarker(latlng, {
-      radius: 8,
+  const polyLayer = L.geoJSON(null, {
+    style: () => ({
+      color: "#38bdf8",
       weight: 2,
-      color: "#ffffff",
-      fillColor: "#2dd4bf",
-      fillOpacity: 0.95,
-    }).addTo(map);
+      fillColor: "#38bdf8",
+      fillOpacity: 0.14,
+    }),
+  }).addTo(map);
 
-    const polyLayer = L.geoJSON(null, {
-      style: () => ({
-        color: "#38bdf8",
-        weight: 2,
-        fillColor: "#38bdf8",
-        fillOpacity: 0.14,
-      }),
-    }).addTo(map);
+  map.setView(latlng, 10);
+  return { map, pointMarker, polyLayer };
+}
 
-    map.setView(latlng, 10);
-    return { map, pointMarker, polyLayer };
-  }
 
   function setPolygon(polyLayer, gj) {
     if (!polyLayer) return;
@@ -576,56 +567,75 @@
     fitToContext(mapObj, layer, click);
   }
 
-  function renderAllGroups() {
-    if (!el.groupsWrap) return;
+function renderAllGroups() {
+  if (!el.groupsWrap) return;
 
-    const layers = Array.isArray(payload?.layers) ? payload.layers : [];
-    el.groupsWrap.innerHTML = "";
+  const layers = Array.isArray(payload?.layers) ? payload.layers : [];
+  el.groupsWrap.innerHTML = "";
 
-    if (el.groupsCount) el.groupsCount.textContent = String(layers.length || 0);
+  if (el.groupsCount) el.groupsCount.textContent = String(layers.length || 0);
 
-    if (!layers.length) {
-      el.groupsWrap.appendChild(dom("div", { class: "muted", text: "Sin grupos en el resultado." }));
-      return;
-    }
-
-    const click = normalizeClick(payload?.click);
-
-    // orden: inside primero, luego prox, luego otros
-    const score = (s) => {
-      s = String(s || "").toLowerCase();
-      if (["in", "inside", "within", "edge", "onedge"].includes(s)) return 0;
-      if (["prox", "proximity", "buffer", "zam", "nearest_perimeter"].includes(s)) return 1;
-      if (["out", "outside", "fuera"].includes(s)) return 2;
-      return 3;
-    };
-
-    const sorted = [...layers].sort((a, b) => score(a.status) - score(b.status));
-
-    const rendered = sorted.map((layer, idx) => renderGroupCard(layer, click, idx));
-    rendered.forEach(r => el.groupsWrap.appendChild(r.card));
-
-    // activar 1er grupo y crear su mapa
-    const first = rendered[0];
-    if (first) {
-      setActiveGroup(first.groupId);
-      ensureGroupMap(first.groupId, first.mapDivId, getLayerById(first.groupId), click, getLayerById(first.groupId)?.name || "Grupo");
-      // (ya está expandido por defecto) => NO: lo dejamos abierto para UX:
-      const body = first.card.querySelector(".groupBody");
-      const chev = first.card.querySelector(".groupChevron");
-      if (body) body.classList.remove("isHidden");
-      if (chev) chev.textContent = "▾";
-      requestAnimationFrame(() => {
-        const gm = groupMaps.get(first.groupId);
-        if (gm) {
-          gm.map.invalidateSize(true);
-          fitToContext(gm, getLayerById(first.groupId), click);
-        }
-      });
-    }
-
-    showToast("Resultado cargado.");
+  if (!layers.length) {
+    el.groupsWrap.appendChild(
+      dom("div", { class: "muted", text: "Sin grupos en el resultado." })
+    );
+    return;
   }
+
+  const click = normalizeClick(payload?.click);
+
+  // ✅ ORDEN ÚNICO: distancia menor → mayor
+  const sorted = [...layers].sort((a, b) => {
+    const da = Number.isFinite(a?.borderDistanceM)
+      ? a.borderDistanceM
+      : Number.isFinite(a?.distanceM)
+        ? a.distanceM
+        : Infinity;
+
+    const db = Number.isFinite(b?.borderDistanceM)
+      ? b.borderDistanceM
+      : Number.isFinite(b?.distanceM)
+        ? b.distanceM
+        : Infinity;
+
+    return da - db;
+  });
+
+  const rendered = sorted.map((layer, idx) =>
+    renderGroupCard(layer, click, idx)
+  );
+
+  rendered.forEach(r => el.groupsWrap.appendChild(r.card));
+
+  // activar primer grupo (el más cercano)
+  const first = rendered[0];
+  if (first) {
+    setActiveGroup(first.groupId);
+    ensureGroupMap(
+      first.groupId,
+      first.mapDivId,
+      getLayerById(first.groupId),
+      click,
+      getLayerById(first.groupId)?.name || "Grupo"
+    );
+
+    const body = first.card.querySelector(".groupBody");
+    const chev = first.card.querySelector(".groupChevron");
+    if (body) body.classList.remove("isHidden");
+    if (chev) chev.textContent = "▾";
+
+    requestAnimationFrame(() => {
+      const gm = groupMaps.get(first.groupId);
+      if (gm) {
+        gm.map.invalidateSize(true);
+        fitToContext(gm, getLayerById(first.groupId), click);
+      }
+    });
+  }
+
+  showToast("Resultado cargado.");
+}
+
 
   function wireEvents() {
     if (el.btnBack) {

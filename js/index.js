@@ -152,17 +152,17 @@ function crearMapa() {
     .setView(HOME_VIEW.center, HOME_VIEW.zoom);
 
   topoBase = L.tileLayer(
-    "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     {
-      name: "OpenTopoMap",
-      maxZoom: 17,
-      subdomains: "abc",
+      name: "OpenStreetMap",
+      maxZoom: 19,
       opacity: 1.0,
-      attribution: "Map data: &copy; OpenStreetMap contributors, SRTM | OpenTopoMap",
+      attribution: "&copy; OpenStreetMap contributors",
       crossOrigin: true,
       updateWhenIdle: true
     }
   );
+
 
   satOverlay = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
