@@ -7,6 +7,77 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="css/index.css" />
+  
+  <!-- ✅ Solo estilos adicionales para la tabla (no duplicar lo que ya existe en index.css) -->
+  <style>
+    /* Tabla de resumen por grupo */
+    .statsbar {
+      display: block; /* ✅ Sobreescribe display:flex del CSS original */
+      padding: 0.5rem 1rem;
+    }
+
+    .statsbar h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .group-summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .group-summary-table thead {
+      background: #f5f5f5;
+      border-bottom: 2px solid #ddd;
+    }
+
+    .group-summary-table th {
+      padding: 0.4rem 0.6rem;
+      text-align: left;
+      font-weight: 600;
+      color: #555;
+    }
+
+    .group-summary-table th:nth-child(2),
+    .group-summary-table th:nth-child(3),
+    .group-summary-table td:nth-child(2),
+    .group-summary-table td:nth-child(3) {
+      text-align: right;
+    }
+
+    .group-summary-table tbody tr {
+      border-bottom: 1px solid #eee;
+    }
+
+    .group-summary-table tbody tr:hover {
+      background: #f9f9f9;
+    }
+
+    .group-summary-table td {
+      padding: 0.35rem 0.6rem;
+      color: #333;
+    }
+
+    .group-summary-table td.muted {
+      color: #999;
+      font-style: italic;
+      text-align: center;
+    }
+
+    .group-summary-table tfoot {
+      background: #f0f8ff;
+      border-top: 2px solid #3498db;
+      font-weight: 600;
+    }
+
+    .group-summary-table tfoot td {
+      padding: 0.5rem 0.6rem;
+      color: #2c3e50;
+    }
+  </style>
 </head>
 <body>
   <header class="topbar">
@@ -32,20 +103,28 @@
     </div>
   </header>
 
-  <!-- Barra resumen dinámica (BBOX) -->
+  <!-- ✅ Panel con clase .statsbar (como espera el JS y el CSS) -->
   <div class="statsbar" aria-live="polite">
-    <div class="stat">
-      <div class="k">Áreas en BBOX</div>
-      <div class="v" id="stProtected">—</div>
-    </div>
-    <div class="stat">
-      <div class="k">Total en BBOX</div>
-      <div class="v" id="stTotal">—</div>
-    </div>
-    <div class="stat">
-      <div class="k">Sup. protegida (BBOX)</div>
-      <div class="v" id="stArea">—</div>
-    </div>
+    <h2>📊 Resumen por grupo (BBOX visible)</h2>
+    <table class="group-summary-table">
+      <thead>
+        <tr>
+          <th>Grupo</th>
+          <th>Sitios</th>
+          <th>Superficie</th>
+        </tr>
+      </thead>
+      <tbody id="groupSummaryBody">
+        <tr><td colspan="3" class="muted">—</td></tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td>TOTAL</td>
+          <td id="groupSummaryTotalN">—</td>
+          <td id="groupSummaryTotalArea">—</td>
+        </tr>
+      </tfoot>
+    </table>
   </div>
 
   <main class="main">

@@ -1,719 +1,744 @@
-(() => {
-  "use strict";
+/************************************************************
+ * GeoNEMO - mapaout.js
+ * Lee localStorage["geonemo_out_v2"], renderiza resultados por grupo
+ * con mapas individuales, lazy-draw de geometrías, y formateo inteligente.
+ ************************************************************/
 
-  const STORAGE_KEY = "geonemo_out_v2";
-  const MAP_PREF_KEY = "geonemo_map_pref";
-  const FIT_MODE_KEY = "geonemo_fit_mode"; // "area" | "area_point"
+const STORAGE_KEY = "geonemo_out_v2";
+const MAX_DISTANCE_FOR_DRAW = 300000; // 300 km - más allá no dibujamos geometría
 
-  const el = {
-    toast: document.getElementById("toast"),
+let mainMap = null;
+let pointMarker = null;
+let groupMaps = {}; // { groupId: leaflet map instance }
+let groupLayers = {}; // { groupId: leaflet layer }
+let mainMapBounds = null; // Guardar bounds originales para recentrar
 
-    btnBack: document.getElementById("btnBack"),
-    btnDownloads: document.getElementById("btnDownloads"),
-    downloadsMenu: document.getElementById("downloadsMenu"),
-    btnDownloadJSON: document.getElementById("btnDownloadJSON"),
-    btnDownloadSelectedGeoJSON: document.getElementById("btnDownloadSelectedGeoJSON"),
-    btnCopyLink: document.getElementById("btnCopyLink"),
-
-    groupsCount: document.getElementById("groupsCount"),
-    groupsWrap: document.getElementById("groupsWrap"),
-  };
-
-  let payload = null;
-
-  // maps por grupo
-  const groupMaps = new Map(); // groupId -> { map, polyLayer, pointMarker, tagLayer }
-  let activeGroupId = null;    // grupo "activo" (para descarga GeoJSON)
-
-  function showToast(msg) {
-    if (!el.toast) return;
-    el.toast.textContent = msg;
-    el.toast.classList.add("show");
-    clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => el.toast.classList.remove("show"), 2200);
-  }
-
-  function safeText(v) {
-    if (v === null || v === undefined) return "";
-    return String(v);
-  }
-
-  function fmtDist(m) {
-    if (m === null || m === undefined || Number.isNaN(Number(m))) return "—";
-    const mm = Math.abs(Number(m));
-    if (mm < 1000) return `${Math.round(mm)} m`;
-    return `${(mm / 1000).toFixed(2)} km`;
-  }
-
-  function fmtArea(m2) {
-    if (m2 === null || m2 === undefined || !Number.isFinite(Number(m2))) return "—";
-    const v = Number(m2);
-    const ha = v / 10000;
-    const km2 = v / 1e6;
-    const m2s = Math.round(v).toLocaleString("es-CL");
-    const has = ha.toLocaleString("es-CL", { maximumFractionDigits: 2 });
-    const km2s = km2.toLocaleString("es-CL", { maximumFractionDigits: 3 });
-    return `${m2s} m² · ${has} ha · ${km2s} km²`;
-  }
-
-  function readMapPref() {
-    try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
-    catch { return {}; }
-  }
-
-  function readFitMode() {
-    const v = String(localStorage.getItem(FIT_MODE_KEY) || "").toLowerCase();
-    return (v === "area" || v === "area_point") ? v : "area_point";
-  }
-
-  function writeFitMode(v) {
-    const mode = (v === "area" || v === "area_point") ? v : "area_point";
-    localStorage.setItem(FIT_MODE_KEY, mode);
-    return mode;
-  }
-
-  function toggleMenu(forceOpen = null) {
-    if (!el.downloadsMenu) return;
-    const open = forceOpen !== null ? forceOpen : !el.downloadsMenu.classList.contains("open");
-    el.downloadsMenu.classList.toggle("open", open);
-    el.downloadsMenu.setAttribute("aria-hidden", open ? "false" : "true");
-  }
-
-  function downloadText(filename, text, mime = "application/json") {
-    const blob = new Blob([text], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  function normalizeClick(click) {
-    if (!click) return null;
-
-    if (Array.isArray(click) && click.length >= 2) {
-      const a = Number(click[0]);
-      const b = Number(click[1]);
-      const looksLikeLonLat = Math.abs(a) <= 180 && Math.abs(b) <= 90;
-      const looksLikeLatLon = Math.abs(a) <= 90 && Math.abs(b) <= 180;
-      if (looksLikeLonLat && !looksLikeLatLon) return { lat: b, lng: a };
-      return { lat: a, lng: b };
+/* ===========================
+   Scroll helpers
+=========================== */
+window.scrollToGroup = function(index) {
+  const card = document.querySelector(`[data-index="${index}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+    const bodyId = card.querySelector(".groupHead")?.dataset?.target;
+    if (bodyId) {
+      const body = document.getElementById(bodyId);
+      if (body?.classList.contains("isHidden")) {
+        body.classList.remove("isHidden");
+        const chevron = card.querySelector(".groupChevron");
+        if (chevron) chevron.textContent = "▼";
+      }
     }
-
-    if (typeof click === "object") {
-      if (click.lat !== undefined && click.lng !== undefined) return { lat: +click.lat, lng: +click.lng };
-      if (click.lat !== undefined && click.lon !== undefined) return { lat: +click.lat, lng: +click.lon };
-      if (click.y !== undefined && click.x !== undefined) return { lat: +click.y, lng: +click.x };
-    }
-
-    return null;
   }
+};
 
-  function hasGeoJSON(gj) {
-    return !!(gj && (gj.type === "Feature" || gj.type === "FeatureCollection" || gj.type === "Polygon" || gj.type === "MultiPolygon"));
+window.scrollToTop = function() {
+  window.scrollTo({ top: 0, behavior: "smooth" });
+};
+
+window.recenterMainMap = function() {
+  if (mainMap && mainMapBounds) {
+    mainMap.fitBounds(mainMapBounds, { padding: [40, 40], animate: true });
+    toast("🎯 Mapa recentrado", 1200);
   }
+};
 
-  function toFeatureCollection(gj) {
-    if (!gj) return null;
-    if (gj.type === "FeatureCollection") return gj;
-    if (gj.type === "Feature") return { type: "FeatureCollection", features: [gj] };
-    if (gj.type === "Polygon" || gj.type === "MultiPolygon") {
-      return { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: gj }] };
-    }
-    return null;
-  }
-
-  function ddToDms(dd, isLat) {
-    if (!Number.isFinite(Number(dd))) return "—";
-    const v = Number(dd);
-    const dir = isLat ? (v >= 0 ? "N" : "S") : (v >= 0 ? "E" : "W");
-    const av = Math.abs(v);
-    const deg = Math.floor(av);
-    const minFloat = (av - deg) * 60;
-    const min = Math.floor(minFloat);
-    const sec = (minFloat - min) * 60;
-    const secStr = sec.toFixed(2).padStart(5, "0");
-    return `${deg}°${String(min).padStart(2, "0")}'${secStr}" ${dir}`;
-  }
-
-  function statusToBadge(status) {
-    const s = String(status || "").toLowerCase();
-    if (["in", "inside", "within", "onedge", "on_edge", "edge"].includes(s)) return { label: "DENTRO", cls: "badge--in" };
-    if (["prox", "proximity", "buffer", "zam", "nearest_perimeter"].includes(s)) return { label: "PROXIMIDAD", cls: "badge--prox" };
-    if (["out", "outside", "fuera"].includes(s)) return { label: "FUERA", cls: "badge--out" };
-    if (["none", "nomatch", "no match", "sin match", "sin_match"].includes(s)) return { label: "SIN MATCH", cls: "badge--neutral" };
-    return { label: safeText(status || "—").toUpperCase() || "—", cls: "badge--neutral" };
-  }
-
-  function rowBadgeMini(status) {
-    const s = String(status || "").toLowerCase();
-    if (["in", "inside", "within", "edge", "onedge"].includes(s)) return { label: "in", cls: "in" };
-    if (["prox", "proximity", "buffer", "zam", "nearest_perimeter"].includes(s)) return { label: "prox", cls: "prox" };
-    if (["out", "outside", "fuera"].includes(s)) return { label: "out", cls: "out" };
-    if (["none", "nomatch", "no match", "sin match", "sin_match"].includes(s)) return { label: "sin", cls: "none" };
-    return { label: "—", cls: "none" };
-  }
-
-  function loadPayload() {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    try { return JSON.parse(raw); }
-    catch { return null; }
-  }
-
-  function canonicalStatusFromLinkType(linkType) {
-    const lt = String(linkType || "").toLowerCase();
-    if (["inside", "in", "within", "edge", "onedge", "on_edge"].includes(lt)) return "inside";
-    if (["nearest_perimeter", "prox", "proximity", "buffer", "zam"].includes(lt)) return "prox";
-    if (["out", "outside", "fuera"].includes(lt)) return "out";
-    return "none";
-  }
-
-  function normalizePayload(raw) {
-    if (!raw || typeof raw !== "object") return null;
-    const out = { ...raw };
-    out.updatedAt = out.updatedAt || out.updated_at || new Date().toISOString();
-
-    // bbox objeto -> array
-    if (out.bbox && typeof out.bbox === "object" && !Array.isArray(out.bbox)) {
-      const w = Number(out.bbox.west), s = Number(out.bbox.south),
-        e = Number(out.bbox.east), n = Number(out.bbox.north);
-      if ([w, s, e, n].every(Number.isFinite)) out.bbox = [w, s, e, n];
-    }
-
-    // links[] -> layers[] (compat)
-    if (!Array.isArray(out.layers) && Array.isArray(out.links)) {
-      out.layers = out.links.map((link, i) => {
-        const status = canonicalStatusFromLinkType(link.link_type || link.status);
-        const poly = link.feature || link.polygon || null;
-
-        return {
-          id: link.layer_id || link.id || `layer_${i}`,
-          name: link.layer_name || link.name || "Capa",
-          status,
-          rawStatus: String(link.link_type || link.status || "").toLowerCase(),
-
-          distanceM: (link.distance_km != null && isFinite(link.distance_km))
-            ? Number(link.distance_km) * 1000
-            : (link.distance_m != null ? Number(link.distance_m) : null),
-
-          borderDistanceM: (link.distance_border_m != null && isFinite(link.distance_border_m))
-            ? Number(link.distance_border_m)
-            : null,
-
-          polygon: poly,
-          properties: (poly?.properties) || link.properties || null
-        };
-      });
-    }
-
-    return out;
-  }
-
-  function dom(tag, attrs = {}, children = []) {
-    const n = document.createElement(tag);
-    Object.entries(attrs).forEach(([k, v]) => {
-      if (k === "class") n.className = v;
-      else if (k === "text") n.textContent = v;
-      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.substring(2), v);
-      else n.setAttribute(k, v);
-    });
-    (Array.isArray(children) ? children : [children]).forEach(c => {
-      if (c === null || c === undefined) return;
-      if (typeof c === "string") n.appendChild(document.createTextNode(c));
-      else n.appendChild(c);
-    });
-    return n;
-  }
-
-  function renderAttrs(boxEl, obj) {
-    if (!boxEl) return;
-    boxEl.innerHTML = "";
-
-    if (!obj || typeof obj !== "object" || !Object.keys(obj).length) {
-      boxEl.appendChild(dom("div", { class: "muted", text: "Sin atributos." }));
-      return;
-    }
-
-    const table = dom("table", { class: "attrTable" });
-    Object.keys(obj).sort().forEach((k) => {
-      const tr = dom("tr");
-      tr.appendChild(dom("td", { class: "k", text: safeText(k) }));
-      tr.appendChild(dom("td", { class: "v", text: safeText(obj[k]) }));
-      table.appendChild(tr);
-    });
-    boxEl.appendChild(table);
-  }
-
-  /* =========================
-     Map por grupo
-  ========================= */
-
-function createLeafletMap(divId, click) {
-  const map = L.map(divId, { zoomControl: true, attributionControl: true });
-
-  // ✅ BASE SATELITAL 100% (sin OSM/OpenTopoMap debajo)
-  const satBase = L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    {
-      name: "Esri Satélite",
-      maxZoom: 19,
-      opacity: 1.0,
-      attribution: "Tiles &copy; Esri",
-      crossOrigin: true,
-      updateWhenIdle: true
-    }
-  );
-
-  satBase.addTo(map);
-
-  const latlng = click ? [click.lat, click.lng] : [-24.5, -70.55];
-  const pointMarker = L.circleMarker(latlng, {
-    radius: 8,
-    weight: 2,
-    color: "#ffffff",
-    fillColor: "#2dd4bf",
-    fillOpacity: 0.95,
-  }).addTo(map);
-
-  const polyLayer = L.geoJSON(null, {
-    style: () => ({
-      color: "#38bdf8",
-      weight: 2,
-      fillColor: "#38bdf8",
-      fillOpacity: 0.14,
-    }),
-  }).addTo(map);
-
-  map.setView(latlng, 10);
-  return { map, pointMarker, polyLayer };
+/* ===========================
+   Helpers
+=========================== */
+function toast(msg, ms = 2500) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove("show"), ms);
 }
 
+function fmtKm(m) {
+  if (!isFinite(m) || m == null) return "—";
+  const km = m / 1000;
+  return `${km.toFixed(2)} km`;
+}
 
-  function setPolygon(polyLayer, gj) {
-    if (!polyLayer) return;
-    polyLayer.clearLayers();
-    const fc = toFeatureCollection(gj);
-    if (!fc) return;
-    polyLayer.addData(fc);
+function fmtArea(m2) {
+  if (!isFinite(m2) || m2 == null) return "—";
+  const ha = m2 / 10000;
+  if (ha >= 1000) {
+    const km2 = m2 / 1e6;
+    return `${km2.toLocaleString("es-CL", { maximumFractionDigits: 1 })} km²`;
   }
+  return `${ha.toLocaleString("es-CL", { maximumFractionDigits: 1 })} ha`;
+}
 
-  function fitToContext(mapObj, layerObj, click) {
-    const { map, polyLayer, pointMarker } = mapObj;
-    const mode = readFitMode(); // "area" | "area_point"
+function normalizarRegiones(regionStr) {
+  if (!regionStr) return [];
+  const separators = /[;,\/]|\s+y\s+/gi;
+  const partes = regionStr.split(separators).map(r => r.trim()).filter(Boolean);
+  return partes.map(r => r.replace(/^Región\s+(de\s+)?/i, "").trim());
+}
+
+function getDictamen(linkType) {
+  if (linkType === "inside") return { text: "DENTRO", class: "in" };
+  if (linkType === "nearest_perimeter") return { text: "PROXIMIDAD", class: "prox" };
+  if (linkType === "none") return { text: "SIN DATOS", class: "none" };
+  if (linkType === "error") return { text: "ERROR", class: "none" };
+  return { text: "—", class: "none" };
+}
+
+// Calcular orientación cardinal desde punto a centroide de geometría
+function calcularOrientacion(lat1, lng1, lat2, lng2) {
+  const dLng = lng2 - lng1;
+  const dLat = lat2 - lat1;
+  
+  let angulo = Math.atan2(dLng, dLat) * 180 / Math.PI;
+  if (angulo < 0) angulo += 360;
+  
+  const direcciones = [
+    "N", "NNE", "NE", "ENE", 
+    "E", "ESE", "SE", "SSE",
+    "S", "SSO", "SO", "OSO",
+    "O", "ONO", "NO", "NNO"
+  ];
+  
+  const idx = Math.round(angulo / 22.5) % 16;
+  return direcciones[idx];
+}
+
+/* ===========================
+   Mapa principal (punto + geometrías resumen)
+=========================== */
+function initMainMap(lat, lng, links) {
+  mainMap = L.map("map", { zoomControl: true, preferCanvas: true }).setView([lat, lng], 12);
+
+  L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    {
+      maxZoom: 19,
+      attribution: "Tiles &copy; Esri",
+      crossOrigin: true,
+    }
+  ).addTo(mainMap);
+
+  pointMarker = L.circleMarker([lat, lng], {
+    radius: 8,
+    weight: 3,
+    color: "#65a30d",
+    fillColor: "#bef264",
+    fillOpacity: 0.8,
+    zIndexOffset: 1000,
+  }).addTo(mainMap);
+
+  pointMarker.bindTooltip("📍 Punto consultado", { permanent: false, direction: "top" });
+
+  const bounds = L.latLngBounds([lat, lng]);
+  let hasGeometries = false;
+
+  links.forEach((link, idx) => {
+    const distanceM = link.distance_m;
+    const feature = link.feature;
+    
+    if (!feature || !distanceM || distanceM > MAX_DISTANCE_FOR_DRAW) return;
+
+    const data = extractGroupData(link);
+    const dictamen = getDictamen(link.link_type);
+    
+    let color = "#22c55e";
+    let fillOpacity = 0.12;
+    if (link.link_type === "inside") {
+      color = "#22c55e";
+      fillOpacity = 0.18;
+    } else if (link.link_type === "nearest_perimeter") {
+      color = "#f59e0b";
+      fillOpacity = 0.12;
+    }
+
+    const layer = L.geoJSON(feature, {
+      style: {
+        color: color,
+        weight: 2,
+        fillColor: color,
+        fillOpacity: fillOpacity,
+      },
+    }).addTo(mainMap);
+
     try {
-      if (polyLayer && polyLayer.getLayers().length) {
-        const b = polyLayer.getBounds();
-        if (b && b.isValid()) {
-          if (mode === "area_point" && pointMarker) b.extend(pointMarker.getLatLng());
-          map.fitBounds(b.pad(0.12));
-          return;
-        }
-      }
-      if (click && pointMarker) map.setView(pointMarker.getLatLng(), 11);
-    } catch (e) {
-      console.warn("fitToContext:", e);
-    }
-  }
+      bounds.extend(layer.getBounds());
+      hasGeometries = true;
+    } catch (e) {}
 
-  function computeMetrics(layer, click) {
-    const out = {
-      distBorde: "—",
-      distCentroid: "—",
-      diamEq: "—",
-      centroidDD: "—",
-      centroidDMS: "—",
-      area: "—",
-    };
+    const distKm = fmtKm(distanceM);
+    const tooltipContent = `
+      <div style="min-width:180px;">
+        <div style="font-weight:600;margin-bottom:4px;">${link.layer_name || link.layer_id}</div>
+        <div style="font-size:0.9em;opacity:0.85;margin-bottom:4px;">${data.nombre}</div>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+          <span class="badgeMini ${dictamen.class}" style="font-size:0.75em;padding:2px 6px;">${dictamen.text}</span>
+          <span style="font-size:0.85em;">${link.link_type === "inside" ? "0 km" : distKm}</span>
+        </div>
+        <button 
+          onclick="scrollToGroup(${idx})" 
+          class="btnSm btn--primary" 
+          style="width:100%;font-size:0.8em;padding:4px 8px;"
+        >
+          ↓ Ver detalle
+        </button>
+      </div>
+    `;
 
-    // borde desde payload (si viene)
-    const dB = (layer?.borderDistanceM != null) ? layer.borderDistanceM : null;
-    if (dB != null) out.distBorde = fmtDist(dB);
+    layer.bindPopup(tooltipContent, { maxWidth: 250 });
+    layer.on("click", () => {
+      layer.openPopup();
+    });
+  });
 
-    if (!window.turf || !layer || !hasGeoJSON(layer.polygon)) return out;
-
+  if (hasGeometries) {
     try {
-      const fc = toFeatureCollection(layer.polygon);
-      const feat = fc?.features?.[0];
-      if (!feat) return out;
-
-      const areaM2 = turf.area(feat);
-      out.area = fmtArea(areaM2);
-
-      const c = turf.centroid(feat);
-      const lon = c?.geometry?.coordinates?.[0];
-      const lat = c?.geometry?.coordinates?.[1];
-
-      if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        out.centroidDD = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
-        out.centroidDMS = `${ddToDms(lat, true)} · ${ddToDms(lon, false)}`;
-      }
-
-      // dist centroide
-      if (click && Number.isFinite(lat) && Number.isFinite(lon)) {
-        const pClick = turf.point([click.lng, click.lat]);
-        const pC = turf.point([lon, lat]);
-        const distM = turf.distance(pClick, pC, { units: "kilometers" }) * 1000;
-        out.distCentroid = fmtDist(distM);
-      }
-
-      // diámetro equivalente
-      const diamM = (Number.isFinite(areaM2) && areaM2 > 0) ? (2 * Math.sqrt(areaM2 / Math.PI)) : null;
-      if (diamM != null && Number.isFinite(diamM)) {
-        out.diamEq = (diamM < 1000) ? `${Math.round(diamM)} m` : `${(diamM / 1000).toFixed(2)} km`;
-      }
-
+      mainMap.fitBounds(bounds, { padding: [40, 40] });
+      mainMapBounds = bounds;
     } catch (e) {
-      console.warn("computeMetrics:", e);
+      mainMap.setView([lat, lng], 12);
+      mainMapBounds = null;
     }
-
-    return out;
+  } else {
+    mainMap.setView([lat, lng], 12);
+    mainMapBounds = null;
   }
 
-  /* =========================
-     Render por grupo
-  ========================= */
+  setTimeout(() => mainMap.invalidateSize(true), 100);
+}
 
-  function setActiveGroup(groupId) {
-    activeGroupId = groupId;
-    // marca visual (opcional): borde del head
-    document.querySelectorAll(".groupCard").forEach(card => {
-      card.classList.toggle("isActive", card.getAttribute("data-group-id") === groupId);
-    });
+/* ===========================
+   Generar resumen textual de áreas detectadas
+=========================== */
+function generarResumenAreas(lat, lng, links) {
+  const resumenEl = document.getElementById("resumenAreas");
+  if (!resumenEl) return;
 
-    // botón download GeoJSON depende del grupo activo con polígono
-    if (el.btnDownloadSelectedGeoJSON) {
-      const layer = getLayerById(groupId);
-      el.btnDownloadSelectedGeoJSON.disabled = !(layer && hasGeoJSON(layer.polygon));
-    }
-  }
+  const areasDetectadas = links.filter(link => {
+    return link.feature && link.distance_m != null && link.distance_m <= MAX_DISTANCE_FOR_DRAW;
+  });
 
-  function getLayerById(groupId) {
-    const layers = Array.isArray(payload?.layers) ? payload.layers : [];
-    return layers.find(l => String(l.id) === String(groupId)) || null;
-  }
-
-  function renderGroupCard(layer, click, idx) {
-    const groupId = String(layer?.id ?? `group_${idx}`);
-    const name = safeText(layer?.name || "Grupo");
-    const status = safeText(layer?.status || "none");
-    const badgeMini = rowBadgeMini(status);
-
-    const distShownM = (layer?.borderDistanceM != null) ? layer.borderDistanceM : layer?.distanceM;
-    const distText = fmtDist(distShownM);
-
-    const b = statusToBadge(status);
-
-    const mapDivId = `map_${groupId.replace(/[^a-zA-Z0-9_:-]/g, "_")}_${idx}`;
-
-    // Head
-    const head = dom("div", { class: "groupHead" }, [
-      dom("div", { class: "groupTitle" }, [
-        dom("div", { class: "groupTitle__name", text: name }),
-        dom("div", { class: "groupTitle__sub", text: `Dist.: ${distText}` }),
-      ]),
-      dom("div", { class: "groupMeta" }, [
-        dom("span", { class: `badgeMini ${badgeMini.cls}`, text: badgeMini.label }),
-        dom("span", { class: "badge " + b.cls, text: b.label }),
-        dom("span", { class: "groupChevron", text: "▾" }),
-      ])
-    ]);
-
-    // Body
-    const mapHeadRight = dom("div", { class: "right" }, [
-      dom("button", {
-        class: "btn btn--ghost btnSm",
-        type: "button",
-        title: "Centrar (área / área+punto)",
-        onclick: (ev) => {
-          ev.stopPropagation();
-          const cur = readFitMode();
-          const next = (cur === "area_point") ? "area" : "area_point";
-          const mode = writeFitMode(next);
-          showToast(mode === "area" ? "Vista: área" : "Vista: área + punto");
-          const gm = groupMaps.get(groupId);
-          if (gm) fitToContext(gm, layer, click);
-        }
-      }, "🎯"),
-      dom("button", {
-        class: "btn btn--ghost btnSm",
-        type: "button",
-        title: "Ajustar vista",
-        onclick: (ev) => {
-          ev.stopPropagation();
-          const gm = groupMaps.get(groupId);
-          if (gm) fitToContext(gm, layer, click);
-        }
-      }, "⤢"),
-    ]);
-
-    const mapCard = dom("div", { class: "groupMapCard" }, [
-      dom("div", { class: "groupMapHead" }, [
-        dom("div", { class: "left", text: "Mapa del grupo" }),
-        mapHeadRight,
-      ]),
-      dom("div", { id: mapDivId, class: "groupMap" }),
-    ]);
-
-    const side = dom("div", { class: "groupSide" });
-    const metrics = computeMetrics(layer, click);
-
-    const kpis = dom("div", { class: "groupKpis" }, [
-      dom("div", { class: "kpi" }, [
-        dom("div", { class: "kpi__label", text: "Estado" }),
-        dom("div", { class: `badge ${b.cls}`, text: b.label }),
-      ]),
-      dom("div", { class: "kpi" }, [
-        dom("div", { class: "kpi__label", text: "Distancia mínima" }),
-        dom("div", { class: "kpi__value", text: distText }),
-      ]),
-      dom("div", { class: "kpi kpiFull" }, [
-        dom("div", { class: "kpi__label", text: "Grupo" }),
-        dom("div", { class: "kpi__value", text: name }),
-      ]),
-
-      // Estadígrafos (bloque simple, mantenible)
-      dom("div", { class: "kpi kpiFull" }, [
-        dom("div", { class: "kpi__label", text: "Estadígrafos" }),
-        dom("div", { class: "muted", text: "Geometría" }),
-        dom("div", { class: "kpi__value", text: `Dist. borde: ${metrics.distBorde} · Diám. eq: ${metrics.diamEq}` }),
-        dom("div", { class: "muted", style: "margin-top:6px;", text: "Localización" }),
-        dom("div", { class: "kpi__value", text: `${metrics.centroidDD}` }),
-        dom("div", { class: "kpi__value muted", text: `${metrics.centroidDMS}` }),
-        dom("div", { class: "muted", style: "margin-top:6px;", text: "Magnitudes" }),
-        dom("div", { class: "kpi__value", text: `Dist. centroide: ${metrics.distCentroid}` }),
-        dom("div", { class: "kpi__value", text: `Área: ${metrics.area}` }),
-      ]),
-    ]);
-
-    side.appendChild(kpis);
-
-    // Atributos (del feature si existe)
-    const attrsBox = dom("div", { class: "groupAttrs" }, [
-      dom("div", { class: "muted", text: "Atributos" }),
-      dom("div", { class: "attrsInner" }),
-    ]);
-    side.appendChild(attrsBox);
-
-    // resolve props
-    let props = null;
-    if (layer.polygon && layer.polygon.type === "Feature" && layer.polygon.properties) props = layer.polygon.properties;
-    else props = layer.properties || null;
-    renderAttrs(attrsBox.querySelector(".attrsInner"), props);
-
-    const grid = dom("div", { class: "groupGrid" }, [mapCard, side]);
-
-    const body = dom("div", { class: "groupBody" }, [grid]);
-
-    const card = dom("div", { class: "groupCard", "data-group-id": groupId }, [head, body]);
-
-    // colapsable
-    head.addEventListener("click", () => {
-      const isHidden = body.classList.toggle("isHidden");
-      head.querySelector(".groupChevron").textContent = isHidden ? "▸" : "▾";
-
-      // al expandir: asegurar mapa inicializado y calzar
-      if (!isHidden) {
-        setActiveGroup(groupId);
-        ensureGroupMap(groupId, mapDivId, layer, click, name);
-        requestAnimationFrame(() => {
-          const gm = groupMaps.get(groupId);
-          if (gm) {
-            gm.map.invalidateSize(true);
-            fitToContext(gm, layer, click);
-          }
-        });
-      }
-    });
-
-    // al hacer foco activo (sin colapsar)
-    card.addEventListener("mouseenter", () => setActiveGroup(groupId));
-
-    // init default (no-lazy) para el primer grupo: simple
-    return { card, groupId, mapDivId };
-  }
-
-  function ensureGroupMap(groupId, mapDivId, layer, click, groupName) {
-    if (groupMaps.has(groupId)) return;
-
-    const mapObj = createLeafletMap(mapDivId, click);
-    groupMaps.set(groupId, mapObj);
-
-    // polígono
-    if (layer && hasGeoJSON(layer.polygon)) {
-      setPolygon(mapObj.polyLayer, layer.polygon);
-
-      // etiqueta (tooltip) para UX: nombre del grupo
-      try {
-        const fc = toFeatureCollection(layer.polygon);
-        const feat = fc?.features?.[0];
-        if (feat && window.turf) {
-          const c = turf.centroid(feat);
-          const lon = c?.geometry?.coordinates?.[0];
-          const lat = c?.geometry?.coordinates?.[1];
-          if (Number.isFinite(lat) && Number.isFinite(lon)) {
-            L.marker([lat, lon], { opacity: 0.0 })
-              .addTo(mapObj.map)
-              .bindTooltip(groupName, { permanent: true, direction: "center", className: "groupTag" })
-              .openTooltip();
-          }
-        }
-      } catch (_) {}
-    }
-
-    fitToContext(mapObj, layer, click);
-  }
-
-function renderAllGroups() {
-  if (!el.groupsWrap) return;
-
-  const layers = Array.isArray(payload?.layers) ? payload.layers : [];
-  el.groupsWrap.innerHTML = "";
-
-  if (el.groupsCount) el.groupsCount.textContent = String(layers.length || 0);
-
-  if (!layers.length) {
-    el.groupsWrap.appendChild(
-      dom("div", { class: "muted", text: "Sin grupos en el resultado." })
-    );
+  if (!areasDetectadas.length) {
+    resumenEl.innerHTML = `
+      <p class="muted" style="margin:0;font-size:0.9rem;">
+        No se detectaron áreas protegidas en un radio de 300 km del punto consultado.
+      </p>
+    `;
     return;
   }
 
-  const click = normalizeClick(payload?.click);
+  let html = '<div style="font-size:0.9rem;line-height:1.6;color:var(--text);">';
+  
+  areasDetectadas.forEach((link, idx) => {
+    const data = extractGroupData(link);
+    const dictamen = getDictamen(link.link_type);
+    const distKm = link.distance_m / 1000;
+    const isInside = link.link_type === "inside";
+    
+    let orientacion = "";
+    if (!isInside && link.feature?.geometry) {
+      try {
+        const centroid = turf.centroid(link.feature);
+        const [centLng, centLat] = centroid.geometry.coordinates;
+        orientacion = calcularOrientacion(lat, lng, centLat, centLng);
+      } catch (e) {
+        orientacion = "—";
+      }
+    }
 
-  // ✅ ORDEN ÚNICO: distancia menor → mayor
-  const sorted = [...layers].sort((a, b) => {
-    const da = Number.isFinite(a?.borderDistanceM)
-      ? a.borderDistanceM
-      : Number.isFinite(a?.distanceM)
-        ? a.distanceM
-        : Infinity;
+    let superficie = data.superficie || "—";
+    if (superficie === "—" && link.feature?.geometry) {
+      try {
+        const areaM2 = turf.area(link.feature);
+        superficie = fmtArea(areaM2);
+      } catch (e) {}
+    }
 
-    const db = Number.isFinite(b?.borderDistanceM)
-      ? b.borderDistanceM
-      : Number.isFinite(b?.distanceM)
-        ? b.distanceM
-        : Infinity;
-
-    return da - db;
+    const grupoNombre = link.layer_name || link.layer_id;
+    const areaNombre = data.nombre !== "—" ? data.nombre : "área sin nombre";
+    
+    if (isInside) {
+      html += `
+        El punto consultado está <strong>dentro</strong> del grupo <strong>${grupoNombre}</strong>, 
+        en el área <em>${areaNombre}</em> (${superficie}).
+      `;
+    } else {
+      html += `
+        El punto consultado está asociado al grupo <strong>${grupoNombre}</strong>, 
+        con el área <em>${areaNombre}</em> (${superficie}), 
+        ubicada a <strong>${distKm.toFixed(2)} km</strong> de distancia 
+        hacia el <strong>${orientacion}</strong>.
+      `;
+    }
+    
+    if (idx < areasDetectadas.length - 1) {
+      html += '<br><br>';
+    }
   });
+  
+  html += '</div>';
+  resumenEl.innerHTML = html;
+}
 
-  const rendered = sorted.map((layer, idx) =>
-    renderGroupCard(layer, click, idx)
-  );
+/* ===========================
+   Mapa individual por grupo
+=========================== */
+function initGroupMap(containerId, lat, lng, feature, distanceM) {
+  if (groupMaps[containerId]) return;
 
-  rendered.forEach(r => el.groupsWrap.appendChild(r.card));
+  const map = L.map(containerId, { zoomControl: false, preferCanvas: true }).setView([lat, lng], 12);
 
-  // activar primer grupo (el más cercano)
-  const first = rendered[0];
-  if (first) {
-    setActiveGroup(first.groupId);
-    ensureGroupMap(
-      first.groupId,
-      first.mapDivId,
-      getLayerById(first.groupId),
-      click,
-      getLayerById(first.groupId)?.name || "Grupo"
-    );
+  L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    {
+      maxZoom: 19,
+      attribution: "Tiles &copy; Esri",
+      crossOrigin: true,
+    }
+  ).addTo(map);
 
-    const body = first.card.querySelector(".groupBody");
-    const chev = first.card.querySelector(".groupChevron");
-    if (body) body.classList.remove("isHidden");
-    if (chev) chev.textContent = "▾";
+  const pointMarker = L.circleMarker([lat, lng], {
+    radius: 6,
+    weight: 2,
+    color: "#65a30d",
+    fillColor: "#bef264",
+    fillOpacity: 0.7,
+  }).addTo(map);
 
-    requestAnimationFrame(() => {
-      const gm = groupMaps.get(first.groupId);
-      if (gm) {
-        gm.map.invalidateSize(true);
-        fitToContext(gm, getLayerById(first.groupId), click);
+  let layer = null;
+  if (feature && distanceM != null && distanceM <= MAX_DISTANCE_FOR_DRAW) {
+    layer = L.geoJSON(feature, {
+      style: {
+        color: "#22c55e",
+        weight: 2,
+        fillColor: "#22c55e",
+        fillOpacity: 0.15,
+      },
+    }).addTo(map);
+
+    groupLayers[containerId] = layer;
+
+    try {
+      const bounds = layer.getBounds();
+      const extendedBounds = bounds.extend([lat, lng]);
+      map.fitBounds(extendedBounds, { padding: [30, 30] });
+    } catch (e) {
+      map.setView([lat, lng], 12);
+    }
+  } else {
+    map.setView([lat, lng], 12);
+  }
+
+  groupMaps[containerId] = map;
+  
+  if (layer) {
+    const toggleBtnId = `toggle-${containerId}`;
+    const toggleBtn = document.getElementById(toggleBtnId);
+    if (toggleBtn) {
+      let showingPoint = true;
+      toggleBtn.addEventListener("click", () => {
+        if (showingPoint) {
+          map.removeLayer(pointMarker);
+          try {
+            map.fitBounds(layer.getBounds(), { padding: [30, 30] });
+          } catch (e) {
+            map.setView([lat, lng], 12);
+          }
+          toggleBtn.textContent = "📍 Punto + área";
+          showingPoint = false;
+        } else {
+          pointMarker.addTo(map);
+          try {
+            const bounds = layer.getBounds();
+            const extendedBounds = bounds.extend([lat, lng]);
+            map.fitBounds(extendedBounds, { padding: [30, 30] });
+          } catch (e) {
+            map.setView([lat, lng], 12);
+          }
+          toggleBtn.textContent = "🗺️ Solo área";
+          showingPoint = true;
+        }
+      });
+    }
+  }
+  
+  setTimeout(() => map.invalidateSize(true), 100);
+}
+
+/* ===========================
+   Extracción de datos por grupo
+=========================== */
+function extractGroupData(link) {
+  const props = link.feature?.properties || {};
+  const layerId = (link.layer_id || "").toLowerCase();
+  
+  let nombre = "—";
+  let categoria = null;
+  let superficie = null;
+  let regiones = [];
+  let decreto = null;
+  let decretoLink = null;
+  let ubicacion = null;
+  let tipo = null;
+
+  if (layerId.includes("snaspe")) {
+    nombre = props.NOMBRE_TOT || props.NOMBRE_UNI || props.NOMBRE || props.nombre || "—";
+    categoria = props.CATEGORIA || props.TIPO_DE_PR || props.categoria || null;
+    
+    if (props.SUPERFICIE != null) {
+      const s = String(props.SUPERFICIE).toLowerCase();
+      if (s.includes("km") || s.includes("km2") || s.includes("km²")) {
+        superficie = s;
+      } else if (s.includes("ha")) {
+        superficie = s;
+      } else {
+        const num = parseFloat(s.replace(/[^\d.,]/g, "").replace(",", "."));
+        if (!isNaN(num)) {
+          superficie = num > 10000 ? fmtArea(num * 10000) : fmtArea(num);
+        }
+      }
+    }
+    
+    if (!superficie && link.feature?.geometry) {
+      try {
+        const areaM2 = turf.area(link.feature);
+        superficie = fmtArea(areaM2);
+      } catch (e) {}
+    }
+
+    if (props.REGION) {
+      regiones = normalizarRegiones(props.REGION);
+    }
+
+    decreto = props.DECRETO || props.decreto || null;
+    decretoLink = props.LINK || props.link || null;
+  }
+
+  if (layerId.includes("ramsar")) {
+    nombre = props.Nombre || props.nombre || props.NOMBRE || "—";
+    tipo = props.Tipo || props.tipo || null;
+    
+    const reg = props.Nomreg || props.nomreg || null;
+    const prov = props.Nomprov || props.nomprov || null;
+    const com = props.Nomcom || props.nomcom || null;
+    ubicacion = [reg, prov, com].filter(Boolean).join(", ") || null;
+
+    decreto = props.Decreto || props.decreto || null;
+
+    if (props.SUPERFICIE != null) {
+      const s = String(props.SUPERFICIE);
+      superficie = s.includes("ha") || s.includes("km") ? s : fmtArea(parseFloat(s) * 10000);
+    } else if (link.feature?.geometry) {
+      try {
+        const areaM2 = turf.area(link.feature);
+        superficie = fmtArea(areaM2);
+      } catch (e) {}
+    }
+  }
+
+  return {
+    nombre,
+    categoria,
+    superficie,
+    regiones,
+    decreto,
+    decretoLink,
+    ubicacion,
+    tipo,
+  };
+}
+
+/* ===========================
+   Renderizar tarjeta de grupo
+=========================== */
+function renderGroupCard(link, clickLat, clickLng, index) {
+  const dictamen = getDictamen(link.link_type);
+  const distanceM = link.distance_m;
+  const distanceBorderM = link.distance_border_m;
+  const data = extractGroupData(link);
+  const groupId = `group-${index}`;
+  const mapId = `map-${groupId}`;
+
+  const distKm = distanceM != null ? fmtKm(distanceM) : "—";
+  const borderKm = distanceBorderM != null ? fmtKm(distanceBorderM) : null;
+  const isInside = link.link_type === "inside";
+  const isFar = distanceM != null && distanceM > MAX_DISTANCE_FOR_DRAW;
+
+  const bodyId = `body-${groupId}`;
+  const toggleBtnId = `toggle-${mapId}`;
+  
+  let bodyHTML = `
+    <div class="groupBody" id="${bodyId}">
+      <div class="groupGrid">
+        <div class="groupMapCard">
+          <div class="groupMapHead">
+            <div class="left">${data.nombre}</div>
+            <div class="right">
+              ${isFar ? 
+                '<span class="small muted">+300 km (sin mapa)</span>' : 
+                `<button class="btnSm btn--ghost" id="${toggleBtnId}" type="button">🗺️ Solo área</button>`
+              }
+            </div>
+          </div>
+          ${isFar ? 
+            '<div class="groupMap" style="display:flex;align-items:center;justify-content:center;background:#f5f5f5;color:#999;">Distancia muy grande para visualizar</div>' :
+            `<div class="groupMap" id="${mapId}"></div>`
+          }
+        </div>
+
+        <div class="groupSide">
+          <div class="groupKpis">
+            <div>
+              <div class="kpi__label">Dictamen</div>
+              <div class="badge badge--${dictamen.class}">${dictamen.text}</div>
+            </div>
+            <div>
+              <div class="kpi__label">Distancia mínima</div>
+              <div class="kpi__value">${isInside ? "0 km (dentro)" : distKm}</div>
+            </div>
+            ${borderKm ? `
+            <div>
+              <div class="kpi__label">Distancia al borde</div>
+              <div class="kpi__value">${borderKm}</div>
+            </div>
+            ` : ''}
+          </div>
+
+          <div class="groupAttrs">
+            <table class="attrTable">
+  `;
+
+  if (data.categoria) {
+    bodyHTML += `<tr><td class="k">Categoría</td><td class="v">${data.categoria}</td></tr>`;
+  }
+  if (data.tipo) {
+    bodyHTML += `<tr><td class="k">Tipo</td><td class="v">${data.tipo}</td></tr>`;
+  }
+  if (data.superficie) {
+    bodyHTML += `<tr><td class="k">Superficie</td><td class="v">${data.superficie}</td></tr>`;
+  }
+  if (data.regiones.length) {
+    bodyHTML += `<tr><td class="k">Región(es)</td><td class="v">${data.regiones.join(", ")}</td></tr>`;
+  }
+  if (data.ubicacion) {
+    bodyHTML += `<tr><td class="k">Ubicación</td><td class="v">${data.ubicacion}</td></tr>`;
+  }
+  if (data.decreto) {
+    let decretoHTML = data.decreto;
+    if (data.decretoLink) {
+      decretoHTML += ` <a href="${data.decretoLink}" target="_blank" rel="noopener" style="color:#65a30d;">🔗</a>`;
+    }
+    bodyHTML += `<tr><td class="k">Decreto</td><td class="v">${decretoHTML}</td></tr>`;
+  }
+
+  bodyHTML += `
+            </table>
+          </div>
+          
+          <div style="margin-top:12px;text-align:center;">
+            <button class="btnSm btn--ghost" onclick="scrollToTop()" type="button">↑ Volver arriba</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const headHTML = `
+    <div class="groupHead" data-target="${bodyId}">
+      <div class="groupTitle">
+        <div class="groupTitle__name">${link.layer_name || link.layer_id}</div>
+        <div class="groupTitle__sub">${data.nombre}</div>
+      </div>
+      <div class="groupMeta">
+        <div class="badgeMini ${dictamen.class}">${dictamen.text}</div>
+        <div class="badgeMini">${isInside ? "0 km" : distKm}</div>
+        <div class="groupChevron">▼</div>
+      </div>
+    </div>
+  `;
+
+  const cardHTML = `
+    <div class="groupCard" data-index="${index}">
+      ${headHTML}
+      ${bodyHTML}
+    </div>
+  `;
+
+  const wrap = document.getElementById("groupsWrap");
+  if (!wrap) return;
+
+  const div = document.createElement("div");
+  div.innerHTML = cardHTML;
+  wrap.appendChild(div.firstElementChild);
+
+  const head = document.querySelector(`[data-target="${bodyId}"]`);
+  const body = document.getElementById(bodyId);
+  if (head && body) {
+    head.addEventListener("click", () => {
+      const isHidden = body.classList.toggle("isHidden");
+      const chevron = head.querySelector(".groupChevron");
+      if (chevron) chevron.textContent = isHidden ? "▶" : "▼";
+      
+      if (!isHidden && !isFar && !groupMaps[mapId]) {
+        setTimeout(() => {
+          initGroupMap(mapId, clickLat, clickLng, link.feature, distanceM);
+        }, 100);
+      }
+    });
+
+    if (index > 0) {
+      body.classList.add("isHidden");
+      const chevron = head.querySelector(".groupChevron");
+      if (chevron) chevron.textContent = "▶";
+    } else {
+      if (!isFar) {
+        setTimeout(() => {
+          initGroupMap(mapId, clickLat, clickLng, link.feature, distanceM);
+        }, 200);
+      }
+    }
+  }
+}
+
+/* ===========================
+   Cargar y renderizar
+=========================== */
+function loadAndRender() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      document.body.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:20px;">
+          <h2>No hay consulta disponible</h2>
+          <button class="btn btn--primary" onclick="window.close()">← Volver</button>
+        </div>
+      `;
+      return;
+    }
+
+    const data = JSON.parse(raw);
+    const click = data.click || {};
+    const links = data.links || [];
+
+    if (!click.lat || !click.lng) {
+      throw new Error("Punto consultado inválido");
+    }
+
+    const sorted = links.slice().sort((a, b) => {
+      const dA = a.distance_m ?? Infinity;
+      const dB = b.distance_m ?? Infinity;
+      return dA - dB;
+    });
+
+    initMainMap(click.lat, click.lng, sorted);
+    generarResumenAreas(click.lat, click.lng, sorted);
+
+    const coordsEl = document.getElementById("coordsDisplay");
+    if (coordsEl) {
+      coordsEl.textContent = `${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}`;
+    }
+
+    const countEl = document.getElementById("groupsCount");
+    if (countEl) {
+      countEl.textContent = `${sorted.length} grupo${sorted.length !== 1 ? "s" : ""}`;
+    }
+
+    sorted.forEach((link, idx) => {
+      renderGroupCard(link, click.lat, click.lng, idx);
+    });
+
+    toast(`✅ ${sorted.length} grupo(s) procesados`, 2000);
+
+  } catch (e) {
+    console.error("Error cargando datos:", e);
+    document.body.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:20px;">
+        <h2>Error al cargar los datos</h2>
+        <p style="color:#999;">${e.message}</p>
+        <button class="btn btn--primary" onclick="window.close()">← Volver</button>
+      </div>
+    `;
+  }
+}
+
+/* ===========================
+   Botones de acción
+=========================== */
+function bindUI() {
+  const btnBack = document.getElementById("btnBack");
+  if (btnBack) {
+    btnBack.addEventListener("click", () => {
+      if (window.opener) {
+        window.close();
+      } else {
+        window.history.back();
       }
     });
   }
 
-  showToast("Resultado cargado.");
+  const btnDownloads = document.getElementById("btnDownloads");
+  const downloadsMenu = document.getElementById("downloadsMenu");
+  if (btnDownloads && downloadsMenu) {
+    btnDownloads.addEventListener("click", (e) => {
+      e.stopPropagation();
+      downloadsMenu.classList.toggle("open");
+    });
+
+    document.addEventListener("click", () => {
+      downloadsMenu.classList.remove("open");
+    });
+  }
+
+  const btnDownloadJSON = document.getElementById("btnDownloadJSON");
+  if (btnDownloadJSON) {
+    btnDownloadJSON.addEventListener("click", () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+          toast("⚠️ No hay datos para descargar", 2000);
+          return;
+        }
+
+        const blob = new Blob([raw], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `geonemo-resultado-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        toast("✅ JSON descargado", 1500);
+      } catch (e) {
+        console.error(e);
+        toast("⚠️ Error al descargar JSON", 2000);
+      }
+    });
+  }
+
+  const btnCopyLink = document.getElementById("btnCopyLink");
+  if (btnCopyLink) {
+    btnCopyLink.addEventListener("click", () => {
+      navigator.clipboard.writeText(window.location.href).then(() => {
+        toast("✅ Link copiado", 1500);
+      }).catch(() => {
+        toast("⚠️ No se pudo copiar el link", 2000);
+      });
+    });
+  }
 }
 
-
-  function wireEvents() {
-    if (el.btnBack) {
-      el.btnBack.addEventListener("click", () => {
-        if (history.length > 1) history.back();
-        else location.href = "./index.html";
-      });
-    }
-
-    if (el.btnDownloads) el.btnDownloads.addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
-    document.addEventListener("click", () => toggleMenu(false));
-    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") toggleMenu(false); });
-
-    if (el.btnDownloadJSON) {
-      el.btnDownloadJSON.addEventListener("click", () => {
-        toggleMenu(false);
-        downloadText(`geonemo_resultado_${Date.now()}.json`, JSON.stringify(payload, null, 2), "application/json");
-        showToast("Descargando JSON…");
-      });
-    }
-
-    if (el.btnDownloadSelectedGeoJSON) {
-      el.btnDownloadSelectedGeoJSON.addEventListener("click", () => {
-        toggleMenu(false);
-        const layer = activeGroupId ? getLayerById(activeGroupId) : null;
-        if (!layer || !hasGeoJSON(layer.polygon)) return;
-        const fc = toFeatureCollection(layer.polygon);
-        downloadText(
-          `geonemo_poligono_${String(layer.id || "grupo")}.geojson`,
-          JSON.stringify(fc, null, 2),
-          "application/geo+json"
-        );
-        showToast("Descargando GeoJSON…");
-      });
-    }
-
-    if (el.btnCopyLink) {
-      el.btnCopyLink.addEventListener("click", async () => {
-        toggleMenu(false);
-        const click = normalizeClick(payload?.click);
-        const url = new URL(location.href);
-        if (click) {
-          url.searchParams.set("lat", String(click.lat));
-          url.searchParams.set("lng", String(click.lng));
-        }
-        url.searchParams.set("k", STORAGE_KEY);
-        try { await navigator.clipboard.writeText(url.toString()); showToast("Link copiado."); }
-        catch { showToast("No se pudo copiar (permiso navegador)."); }
-      });
-    }
+/* ===========================
+   Init
+=========================== */
+(function init() {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      bindUI();
+      loadAndRender();
+    });
+  } else {
+    bindUI();
+    loadAndRender();
   }
-
-  function renderNoPayload() {
-    const shell = document.querySelector(".shell") || document.body;
-    shell.innerHTML =
-      '<div style="padding:32px;text-align:center;min-height:300px;display:flex;flex-direction:column;justify-content:center;gap:10px;">' +
-      '<div style="font-size:52px;opacity:.6">📍</div>' +
-      '<h2 style="margin:0">No hay resultado en localStorage</h2>' +
-      '<p style="margin:0;color:#9aa4b2">Abra mapaout desde el flujo de consulta (click en index.html).</p>' +
-      '<p style="margin:0;color:#9aa4b2">Clave esperada: <code>geonemo_out_v2</code></p>' +
-      '<div style="margin-top:10px"><button class="btn btn--primary" onclick="location.href=\'./index.html\'">Ir al mapa principal</button></div>' +
-      "</div>";
-  }
-
-  function boot() {
-    const raw = loadPayload();
-    payload = normalizePayload(raw);
-
-    if (!payload) {
-      renderNoPayload();
-      return;
-    }
-
-    wireEvents();
-
-    // si no hay turf, igual renderiza (solo sin métricas avanzadas)
-    renderAllGroups();
-  }
-
-  window.addEventListener("load", boot);
 })();

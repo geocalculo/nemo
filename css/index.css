@@ -9,6 +9,10 @@
   --primary:#65a30d;
   --primary2:#22c55e;
   --accent:#bef264;
+
+  /* ✅ Layout heights (actualizadas dinámicamente por JS) */
+  --topbar-h: 64px;
+  --statsbar-h: 120px; /* ✅ valor inicial más grande para tabla */
 }
 
 *{ box-sizing:border-box; }
@@ -28,7 +32,7 @@ html, body{
 .topbar{
   position:fixed;
   top:0; left:0; right:0;
-  height:64px;
+  /* ✅ NO fijar height - se mide dinámicamente */
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -40,6 +44,7 @@ html, body{
 }
 
 .brand{ display:flex; gap:10px; align-items:center; min-width:0; }
+
 .logo{
   width:40px; height:40px;
   display:grid; place-items:center;
@@ -49,8 +54,18 @@ html, body{
   background: rgba(255,255,255,0.62);
   font-size:18px;
 }
+
 .title h1{ margin:0; font-size:16px; line-height:1.1; font-weight:600; }
-.title span{ display:block; font-size:12px; color:rgba(11,15,13,0.45); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+.title span{
+  display:block;
+  font-size:12px;
+  color:rgba(11,15,13,0.45);
+  margin-top:2px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
 
 .controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
@@ -75,23 +90,35 @@ select{
   cursor:pointer;
   font-weight:600;
 }
-.btn:hover{ background: rgba(255,255,255,0.72); border-color: rgba(30,41,18,0.18); }
 
-/* ===== Barra resumen dinámica (BBOX) ===== */
+.btn:hover{
+  background: rgba(255,255,255,0.72);
+  border-color: rgba(30,41,18,0.18);
+}
+
+/* ===== Barra resumen dinámica (BBOX) =====
+   ✅ NO fijamos height: debe crecer/achicarse según contenido.
+   ✅ El layout del mapa usa --statsbar-h (set por JS).
+*/
 .statsbar{
   position:fixed;
-  top:64px; left:0; right:0;
-  height:58px;
-  display:flex;
-  gap:12px;
-  align-items:stretch;
+  top:var(--topbar-h);
+  left:0; right:0;
+
+  /* ✅ dinámica - NO fijar height */
+  height:auto;
+
+  /* ✅ CAMBIO: ahora es block para soportar tabla (no flex) */
+  display:block;
   padding:8px 12px;
+
   background: rgba(255,255,255,0.68);
   border-bottom:1px solid var(--stroke);
   z-index:900;
   backdrop-filter: blur(10px);
 }
 
+/* ✅ Estos estilos .stat ya no se usan con la tabla, pero los dejo por compatibilidad */
 .stat{
   flex:1 1 0;
   display:flex;
@@ -124,11 +151,14 @@ select{
 /* ===== Layout principal ===== */
 .main{ display:block; overflow:hidden; }
 
+/* ✅ El mapa siempre ocupa "lo que sobra":
+   el margin-top/height dependen de --statsbar-h (dinámica).
+*/
 .mapwrap{
   position:relative;
   width:100%;
-  height: calc(100dvh - 64px - 58px);
-  margin-top: calc(64px + 58px);
+  height: calc(100dvh - var(--topbar-h) - var(--statsbar-h));
+  margin-top: calc(var(--topbar-h) + var(--statsbar-h));
   overflow:hidden;
   min-width:0;
 }
@@ -156,6 +186,7 @@ select{
   display:none;
   z-index:5;
 }
+
 .toast.show{ display:block; }
 
 /* Select (mejor contraste en móvil) */
@@ -166,13 +197,59 @@ select option{ color: var(--text); background-color: #ffffff; }
   .topbar{
     padding:10px 10px;
     gap:10px;
-    height:auto;
+    height:auto;              /* tu diseño móvil */
     align-items:flex-start;
   }
+
   .controls{ width:100%; }
   select{ min-width:160px; flex:1 1 160px; }
-  .statsbar{ gap:8px; padding:8px 10px; height:auto; }
+
+  /* ✅ statsbar en móvil: puede crecer; el JS medirá altura real */
+  .statsbar{
+    gap:8px;
+    padding:8px 10px;
+  }
+
   .stat{ padding:6px 8px; border-radius:12px; }
   .stat .k{ font-size:11px; }
   .stat .v{ font-size:14px; }
+}
+
+/* ===== Modo tabla (tu panel nuevo) ===== */
+.statsbar--table { justify-content:flex-start; }
+.stat--table { flex:1; min-width:360px; }
+
+.miniTable{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+}
+
+.miniTable th, .miniTable td{
+  padding:6px 8px;
+  border-top:1px solid rgba(0,0,0,.06);
+}
+
+.miniTable thead th{
+  font-weight:600;
+  opacity:.75;
+  text-align:left;
+}
+
+.miniTable td:nth-child(2),
+.miniTable td:nth-child(3),
+.miniTable th:nth-child(2),
+.miniTable th:nth-child(3){
+  text-align:right;
+  white-space:nowrap;
+}
+
+.miniTable tfoot th{
+  border-top:2px solid rgba(0,0,0,.10);
+  font-weight:700;
+}
+
+.miniTable .muted{
+  opacity:.6;
+  text-align:center;
 }

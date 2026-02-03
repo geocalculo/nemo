@@ -7,13 +7,12 @@
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- ✅ Turf (área, centroide, distancias) -->
-  <script defer src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <!-- Turf (área, centroide, distancias) -->
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
-  <link rel="stylesheet" href="./css/mapaout.css" />
-  <script defer src="./js/mapaout.js"></script>
+  <link rel="stylesheet" href="css/mapaout.css" />
 </head>
 
 <body>
@@ -22,7 +21,7 @@
       <div class="brand__dot"></div>
       <div class="brand__txt">
         <div class="brand__title">GeoNEMO · MapaOut</div>
-        <div class="brand__sub">Salida de análisis: punto consultado + vinculación por capas</div>
+        <div class="brand__sub">Salida de análisis: punto consultado + vinculación por grupos</div>
       </div>
     </div>
 
@@ -41,7 +40,26 @@
   </header>
 
   <main class="shell">
-    <!-- fila superior: mapa + dictamen -->
+    <!-- Mapa superior -->
+    <section class="card">
+      <div class="cardHead">
+        <div class="cardTitle">📍 Punto consultado</div>
+        <div class="cardHead__right">
+          <div id="coordsDisplay" class="pill">—</div>
+          <button class="btnSm btn--ghost" onclick="recenterMainMap()" type="button">🎯 Recentrar</button>
+        </div>
+      </div>
+      
+      <!-- Resumen textual de áreas detectadas -->
+      <div id="resumenAreas" style="padding: 0 12px 12px 12px; border-bottom: 1px solid var(--line);"></div>
+      
+      <div class="mapFrame">
+        <div id="map"></div>
+        <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
+      </div>
+    </section>
+
+    <!-- Resultados por grupo -->
     <section class="card" aria-label="Resultados por grupo">
       <div class="cardHead">
         <div class="cardTitle">Resultados por grupo</div>
@@ -49,17 +67,13 @@
       </div>
 
       <div id="groupsWrap" class="groupsWrap"></div>
-
-      <!-- ✅ Mantengo el toast acá (único, global) -->
-      <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
     </section>
-
-
-
 
     <div class="footerNote muted">
       * Resultado preliminar de apoyo. No reemplaza pronunciamientos oficiales ni evaluaciones ambientales.
     </div>
   </main>
+
+  <script src="js/mapaout.js"></script>
 </body>
 </html>

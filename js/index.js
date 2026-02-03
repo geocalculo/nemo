@@ -1,27 +1,11 @@
 /************************************************************
  * GeoNEMO - index.js (WGS84 + Vinculación por GRUPO)
  *
- * - Carga grupos desde:
- *    /capas/grupo_snaspe.json
- * - Click:
- *    Para cada GRUPO => 1 único polígono ganador:
- *      a) inside (punto dentro) => ganador inmediato
- *      b) si no => nearest_perimeter (más cercano al perímetro) => ganador
+ * - Master de grupos: capas/grupos.json
+ * - BBOX resumen: tabla por grupo (# áreas + sup intersección)
+ * - Click: 1 polígono ganador por grupo (inside o nearest perimeter)
  *
- * - distance_m:
- *    * inside => 0  (dictamen “DENTRO”)
- *    * nearest_perimeter => distancia mínima al borde (m)
- *
- * - distance_border_m:
- *    * inside => distancia mínima al BORDE (m) (aunque esté dentro)
- *    * nearest_perimeter => igual a distance_m
- *
- * - Guarda en localStorage (geonemo_out_v2) y abre mapaout.html SIEMPRE
- *
- * + Preferencia mapabase/overlay en localStorage (geonemo_map_pref)
- *
- * IMPORTANTE:
- * - Requiere Leaflet (L) y Turf.js global (turf).
+ * Requiere: Leaflet (L) + Turf.js (turf) global.
  ************************************************************/
 
 const REGIONES_URL = "data/regiones.json";
@@ -29,21 +13,31 @@ const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
 
 const OUT_STORAGE_KEY = "geonemo_out_v2";
 const MAP_PREF_KEY = "geonemo_map_pref";
-
-// ✅ Ruta pedida por ti:
-// ✅ Master de grupos (N grupos en un solo JSON)
 const GROUPS_URL = "capas/grupos.json";
 
 let map;
 let userMarker = null;
 let clickMarker = null;
 
-// Tiles (persistencia)
 let topoBase = null;
 let satOverlay = null;
 
-// fileUrl -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
+// ✅ Debounce para invalidateSize() cuando cambian alturas (evita loops)
+let _mapResizeRAF = false;
+function scheduleMapInvalidateSize() {
+  if (!map || _mapResizeRAF) return;
+  _mapResizeRAF = true;
+  requestAnimationFrame(() => {
+    _mapResizeRAF = false;
+    try { map.invalidateSize(false); } catch (_) {}
+  });
+}
+
+
+// ✅ Cache de archivos: fileUrl -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
 const fileState = new Map();
+
+let GROUPS = [];
 
 /* ===========================
    UI helpers
@@ -96,7 +90,7 @@ function assertTurfReady() {
 
   if (!ok) {
     console.error("[GeoNEMO] Turf.js no está cargado o faltan funciones. Revisa index.html (script turf).");
-    toast("⚠️ Falta Turf.js (no puedo calcular inside/nearest). Revisa index.html.", 3800);
+    toast("⚠️ Falta Turf.js (no puedo calcular). Revisa index.html.", 3800);
   }
   return ok;
 }
@@ -138,11 +132,108 @@ function syncMapPrefFromCurrentLayers(){
   if (!map || !satOverlay) return;
   const hasSat = map.hasLayer(satOverlay);
   writeMapPref({
-    base: "OpenTopoMap",
+    base: "OpenStreetMap",
     overlay: hasSat ? "Esri Satélite" : null,
     overlayOpacity: 0.25
   });
 }
+
+// ✅ Auto-sync altura real de .statsbar → CSS var --statsbar-h (sin franjas)
+function initStatsbarAutoHeight() {
+  const root = document.documentElement;
+  const stats = document.querySelector(".statsbar");
+  if (!stats) {
+    console.warn("[statsbar] .statsbar no encontrado (auto-height no aplicado).");
+    return;
+  }
+
+  let raf = 0;
+  const apply = () => {
+    // Evita mediciones redundantes en cascada
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+
+      // Medir altura real del panel
+      const h = Math.ceil(stats.getBoundingClientRect().height);
+
+      // Evitar writes innecesarios
+      const prev = parseInt(getComputedStyle(root).getPropertyValue("--statsbar-h")) || 0;
+      if (Math.abs(h - prev) <= 1) return;
+
+      root.style.setProperty("--statsbar-h", `${h}px`);
+
+      // ✅ CORRECCIÓN CRÍTICA: Cuando cambia altura del panel, Leaflet debe redimensionarse
+      scheduleMapInvalidateSize();
+
+      // (Opcional) debug rápido
+      // console.log("[statsbar] --statsbar-h =", h);
+    });
+  };
+
+  // 1) Medición inicial
+  apply();
+
+  // 2) Observa cambios de tamaño del panel (contenido/tabla/estilos)
+  if ("ResizeObserver" in window) {
+    const ro = new ResizeObserver(() => apply());
+    ro.observe(stats);
+
+    // 3) Por seguridad, también al cambiar viewport
+    window.addEventListener("resize", apply, { passive: true });
+
+    // 4) Exponer hook por si quieres forzar manualmente en algún caso raro
+    window.__syncStatsbarHeight = apply;
+
+    console.log("[statsbar] Auto-height activo (ResizeObserver).");
+  } else {
+    // Fallback para navegadores muy viejos (no debería ser tu caso)
+    console.warn("[statsbar] ResizeObserver no disponible, usando fallback por resize.");
+    window.addEventListener("resize", apply, { passive: true });
+    window.__syncStatsbarHeight = apply;
+  }
+}
+
+// ✅ Ejecutar cuando el DOM esté listo
+document.addEventListener("DOMContentLoaded", () => {
+  initStatsbarAutoHeight();
+  initTopbarAutoHeight();
+});
+
+
+function initTopbarAutoHeight() {
+  const root = document.documentElement;
+  const top = document.querySelector(".topbar");
+  if (!top) return;
+
+  let raf = 0;
+  const apply = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      const h = Math.ceil(top.getBoundingClientRect().height);
+      const prev = parseInt(getComputedStyle(root).getPropertyValue("--topbar-h")) || 0;
+      if (Math.abs(h - prev) <= 1) return;
+      root.style.setProperty("--topbar-h", `${h}px`);
+      
+      // ✅ CORRECCIÓN CRÍTICA: Cuando cambia altura del topbar, Leaflet debe redimensionarse
+      scheduleMapInvalidateSize();
+    });
+  };
+
+  apply();
+
+  if ("ResizeObserver" in window) {
+    const ro = new ResizeObserver(() => apply());
+    ro.observe(top);
+    window.addEventListener("resize", apply, { passive: true });
+    window.__syncTopbarHeight = apply;
+  } else {
+    window.addEventListener("resize", apply, { passive: true });
+    window.__syncTopbarHeight = apply;
+  }
+}
+
 
 /* ===========================
    Map init
@@ -163,12 +254,11 @@ function crearMapa() {
     }
   );
 
-
   satOverlay = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
       name: "Esri Satélite",
-      maxZoom: 19,
+      maxZoom: 17,
       opacity: 0.25,
       attribution: "Tiles &copy; Esri",
       crossOrigin: true,
@@ -179,7 +269,6 @@ function crearMapa() {
   const pref = readMapPref();
 
   topoBase.addTo(map);
-  // por defecto ON
   const wantSat = (pref.overlay === "Esri Satélite") || (pref.overlay == null);
   if (wantSat) satOverlay.addTo(map);
 
@@ -187,11 +276,18 @@ function crearMapa() {
   map.on("layerremove", syncMapPrefFromCurrentLayers);
   syncMapPrefFromCurrentLayers();
 
+  // ✅ Eventos que disparan actualización de estadísticas
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
   map.on("click", onMapClick);
 
-  setTimeout(() => map.invalidateSize(true), 250);
+  // ✅ Trigger inicial cuando el mapa esté listo
+  map.whenReady(() => {
+    setTimeout(() => {
+      map.invalidateSize(true);
+      scheduleStatsUpdate();
+    }, 250);
+  });
 }
 
 /* ===========================
@@ -228,14 +324,29 @@ async function cargarRegiones() {
     const opt = sel.options[sel.selectedIndex];
     if (!opt || !opt.value) return;
 
+    let c = null;
+    try { c = JSON.parse(opt.dataset.center); } catch(_) {}
+
     let center = null;
-    try { center = JSON.parse(opt.dataset.center); } catch(_) {}
+    if (Array.isArray(c) && c.length >= 2) {
+      center = [Number(c[0]), Number(c[1])];
+    }
+    if (!center && c && typeof c === "object") {
+      const lat = (c.lat ?? c.latitude ?? c.y);
+      const lng = (c.lng ?? c.lon ?? c.longitude ?? c.x);
+      if (lat != null && lng != null) center = [Number(lat), Number(lng)];
+    }
+
     const zoom = parseInt(opt.dataset.zoom || "7", 10);
 
-    if (Array.isArray(center) && center.length === 2) {
+    if (center && isFinite(center[0]) && isFinite(center[1])) {
       map.setView(center, zoom, { animate: true });
       setTimeout(() => map.invalidateSize(true), 150);
+      // ✅ Trigger stats al cambiar región
       scheduleStatsUpdate();
+    } else {
+      console.warn("[GeoNEMO] Región sin centro válido:", opt.value, opt.dataset.center);
+      toast("⚠️ Esta región no tiene centro (revisa data/regiones.json)", 2400);
     }
   });
 }
@@ -269,9 +380,6 @@ function resolveGroupFileUrl(groupUrl, filePath){
 }
 
 /* ===========================
-   Carga grupo JSON
-=========================== */
-/* ===========================
    Carga MASTER grupos.json
 =========================== */
 async function loadGroupsMaster(url){
@@ -290,7 +398,7 @@ async function loadGroupsMaster(url){
 
     const filesRaw = Array.isArray(g.files) ? g.files : [];
     const files = filesRaw
-      .map(f => resolveGroupFileUrl(url, f))   // ✅ usa helpers que ya tienes
+      .map(f => resolveGroupFileUrl(url, f))
       .filter(u => /\.geojson$/i.test(u));
 
     out.push({
@@ -308,6 +416,7 @@ async function loadGroupsMaster(url){
    Load GeoJSON por ARCHIVO + index bbox/area
 =========================== */
 async function ensureFileLoaded(fileUrl){
+  // ✅ Cache: no recargamos si ya está en memoria
   const st = fileState.get(fileUrl) || { loaded:false, featuresIndex:[] };
   if (st.loaded) return st;
 
@@ -336,48 +445,103 @@ async function ensureFileLoaded(fileUrl){
   st.featuresIndex = idx;
   fileState.set(fileUrl, st);
 
-  toast(`✅ Cargado: ${fileUrl.split("/").pop()} (${idx.length})`, 1200);
   return st;
 }
 
 /* ===========================
-   Stats BBOX
+   Resumen por grupo (BBOX) -> Tabla
 =========================== */
-const elStProtected = document.getElementById("stProtected");
-const elStTotal     = document.getElementById("stTotal");
-const elStArea      = document.getElementById("stArea");
+// ✅ Referencias a elementos del DOM
+const elGroupBody = document.getElementById("groupSummaryBody");
+const elGroupTotN = document.getElementById("groupSummaryTotalN");
+const elGroupTotA = document.getElementById("groupSummaryTotalArea");
 
-function setStatsUI(a, b, c){
-  if (elStProtected) elStProtected.textContent = a;
-  if (elStTotal)     elStTotal.textContent     = b;
-  if (elStArea)      elStArea.textContent      = c;
+function renderGroupSummaryTable(rows){
+  if (!elGroupBody) return;
+
+  elGroupBody.innerHTML = "";
+
+  // ✅ Si no hay resultados, mostrar 0 (no "—")
+  if (!rows || !rows.length){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 3;
+    td.className = "muted";
+    td.textContent = "0 grupos con áreas en el BBOX visible";
+    tr.appendChild(td);
+    elGroupBody.appendChild(tr);
+    
+    if (elGroupTotN) elGroupTotN.textContent = "0";
+    if (elGroupTotA) elGroupTotA.textContent = "0 ha";
+    return;
+  }
+
+  // Ordenar por #areas desc
+  rows.sort((a,b) => (b.count - a.count) || (b.areaM2 - a.areaM2) || String(a.group).localeCompare(String(b.group)));
+
+  let sumN = 0;
+  let sumA = 0;
+
+  for (const r of rows){
+    sumN += r.count;
+    sumA += r.areaM2;
+
+    const tr = document.createElement("tr");
+
+    const tdG = document.createElement("td");
+    tdG.textContent = r.group;
+    tr.appendChild(tdG);
+
+    const tdN = document.createElement("td");
+    tdN.textContent = fmtInt(r.count);
+    tr.appendChild(tdN);
+
+    const tdA = document.createElement("td");
+    tdA.textContent = fmtArea(r.areaM2);
+    tr.appendChild(tdA);
+
+    elGroupBody.appendChild(tr);
+  }
+
+  // ✅ Totales siempre muestran números (no "—")
+  if (elGroupTotN) elGroupTotN.textContent = fmtInt(sumN);
+  if (elGroupTotA) elGroupTotA.textContent = fmtArea(sumA);
 }
 
+/* ===========================
+   Stats BBOX -> por grupo
+=========================== */
+// ✅ Debounce usando requestAnimationFrame
 let _statsRAF = false;
 function scheduleStatsUpdate(){
   if (_statsRAF) return;
   _statsRAF = true;
   requestAnimationFrame(() => {
     _statsRAF = false;
-    updateBboxStats().catch(err => console.warn(err));
+    updateBboxStatsByGroup().catch(err => {
+      console.warn("[GeoNEMO] Error en updateBboxStatsByGroup:", err);
+      // ✅ En caso de error, mostrar 0 (no dejar vacío)
+      renderGroupSummaryTable([]);
+    });
   });
 }
 
-let GROUPS = [];
-
-async function updateBboxStats() {
-  if (!map) return;
-
-  if (!assertTurfReady()) {
-    setStatsUI("—", "—", "—");
+async function updateBboxStatsByGroup() {
+  if (!map) {
+    renderGroupSummaryTable([]);
     return;
   }
 
-  // ✅ Importante: si "enabled" no viene en grupos.json, por defecto queda ACTIVO
+  if (!assertTurfReady()) {
+    renderGroupSummaryTable([]);
+    return;
+  }
+
+  // ✅ Filtrar solo grupos activos (enabled !== false)
   const activeGroups = (GROUPS || []).filter((g) => g && g.enabled !== false);
 
   if (!activeGroups.length) {
-    setStatsUI("—", "—", "—");
+    renderGroupSummaryTable([]);
     return;
   }
 
@@ -385,18 +549,25 @@ async function updateBboxStats() {
   const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
   const bboxPoly = turf.bboxPolygon(bbox);
 
-  let total = 0;            // total features que intersectan bbox (sumado en todos los grupos)
-  let protectedAreaM2 = 0;  // área de intersección (m²)
+  const summaryRows = [];
 
+  let grandCount = 0;
+  let grandAreaM2 = 0;
+
+  // ✅ Procesar cada grupo
   for (const g of activeGroups) {
     const files = Array.isArray(g.files) ? g.files : [];
     if (!files.length) continue;
+
+    let groupCount = 0;
+    let groupAreaM2 = 0;
 
     for (const fileUrl of files) {
       let st;
       try {
         st = await ensureFileLoaded(fileUrl);
       } catch (e) {
+        // ✅ Si falla un archivo, continuar con el resto
         console.warn("[GeoNEMO] error loading:", fileUrl, e);
         continue;
       }
@@ -405,34 +576,45 @@ async function updateBboxStats() {
       if (!idx.length) continue;
 
       for (const it of idx) {
-        // filtro rápido bbox vs bbox
+        // ✅ Filtro rápido bbox-bbox primero
         if (!bboxIntersects(it.bbox, bbox)) continue;
 
-        // confirmación geométrica
+        // Confirmación geométrica
         let touches = false;
         try {
           touches = turf.booleanIntersects(it.feature, bboxPoly);
         } catch (_) {}
         if (!touches) continue;
 
-        total += 1;
+        groupCount += 1;
 
-        // área: intersección si se puede; fallback a área del feature
+        // ✅ Área: intersección si se puede; fallback área del feature
         try {
           const inter = turf.intersect(it.feature, bboxPoly);
-          if (inter) protectedAreaM2 += turf.area(inter);
-          else protectedAreaM2 += Number.isFinite(it.areaM2) ? it.areaM2 : 0;
+          if (inter) groupAreaM2 += turf.area(inter);
+          else groupAreaM2 += Number.isFinite(it.areaM2) ? it.areaM2 : 0;
         } catch (_) {
-          protectedAreaM2 += Number.isFinite(it.areaM2) ? it.areaM2 : 0;
+          groupAreaM2 += Number.isFinite(it.areaM2) ? it.areaM2 : 0;
         }
       }
     }
+
+    // ✅ Solo agregar grupos con resultados > 0
+    if (groupCount > 0) {
+      summaryRows.push({
+        group: g.group_name || g.group_id,
+        count: groupCount,
+        areaM2: groupAreaM2
+      });
+      grandCount += groupCount;
+      grandAreaM2 += groupAreaM2;
+    }
   }
 
-  // UI (3 KPIs: Áreas en BBOX / Total en BBOX / Sup. protegida en BBOX)
-  setStatsUI(fmtInt(total), fmtInt(total), fmtArea(protectedAreaM2));
+  // ✅ Renderizar tabla
+  renderGroupSummaryTable(summaryRows);
 
-  // Persistencia para mapaout
+  // ✅ Persistencia para mapaout (mantengo compat con tu estructura)
   const prev = loadOut() || {};
   saveOut({
     ...prev,
@@ -440,15 +622,15 @@ async function updateBboxStats() {
     bbox: { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] },
     stats: {
       scope: "all_enabled_groups",
-      groups_enabled: activeGroups.map((g) => ({
-        group_id: g.group_id || g.id || null,
-        group_name: g.group_name || g.label || g.name || null,
-        files: (g.files || []).length,
+      by_group: summaryRows.map(r => ({
+        group_name: r.group,
+        areas_bbox: r.count,
+        protected_area_m2: r.areaM2,
+        protected_area_fmt: fmtArea(r.areaM2)
       })),
-      areas_bbox: total,
-      total_bbox: total,
-      protected_area_m2: protectedAreaM2,
-      protected_area_fmt: fmtArea(protectedAreaM2),
+      areas_bbox: grandCount,
+      protected_area_m2: grandAreaM2,
+      protected_area_fmt: fmtArea(grandAreaM2),
     },
   });
 }
@@ -504,21 +686,14 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
 
       if (inside){
         const f = it.feature;
-
-        // ✅ distancia mínima al borde aunque esté dentro
         const dBorde = distToPerimeterM(f, pt);
 
         return {
           group_id: group.group_id,
           group_name: group.group_name,
           link_type: "inside",
-
-          // ✅ dictamen “DENTRO” -> KPI distancia mínima se mantiene 0
           distance_m: 0,
-
-          // ✅ pero guardamos la distancia al BORDE para estadígrafos
           distance_border_m: isFinite(dBorde) ? dBorde : null,
-
           source_file: fileUrl,
           feature: {
             type: "Feature",
@@ -569,10 +744,7 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
     group_name: group.group_name,
     link_type: "nearest_perimeter",
     distance_m: dFinal,
-
-    // ✅ en proximidad, borde = distancia
     distance_border_m: dFinal,
-
     source_file: bestFile,
     feature: {
       type: "Feature",
@@ -598,7 +770,7 @@ async function onMapClick(e){
 
   const pt = turf.point([lng, lat]);
 
-  const activeGroups = (GROUPS || []).filter(g => g.enabled);
+  const activeGroups = (GROUPS || []).filter(g => g.enabled !== false);
   const results = [];
 
   for (const g of activeGroups){
@@ -624,19 +796,14 @@ async function onMapClick(e){
 
   const prev = loadOut() || {};
 
-  // ✅ mapaout consume payload.links -> layers
+  // mapaout consume payload.links -> layers
   const legacyLinks = results.map(r => ({
     layer_id: r.group_id,
     layer_name: r.group_name,
     link_type: r.link_type,
-
-    // “distancia mínima” (dictamen)
     distance_km: isFinite(r.distance_m) ? (r.distance_m / 1000) : null,
     distance_m: r.distance_m ?? null,
-
-    // ✅ NUEVO: distancia al borde (estadígrafos)
     distance_border_m: r.distance_border_m ?? null,
-
     source_file: r.source_file ?? null,
     feature: r.feature
   }));
@@ -646,7 +813,6 @@ async function onMapClick(e){
     created_at: prev.created_at || nowIso(),
     updated_at: nowIso(),
     click: { lat, lng },
-
     groups: results,
     links: legacyLinks
   });
@@ -715,13 +881,13 @@ function bindUI() {
   if (btnPreload) {
     btnPreload.addEventListener("click", async () => {
       try {
-        const activeGroups = (GROUPS || []).filter(g => g.enabled);
+        const activeGroups = (GROUPS || []).filter(g => g.enabled !== false);
         for (const g of activeGroups){
           for (const fileUrl of (g.files || [])){
             await ensureFileLoaded(fileUrl);
           }
         }
-        toast("⬇️ Archivos del grupo precargados", 1400);
+        toast("⬇️ Archivos precargados", 1400);
         scheduleStatsUpdate();
       } catch (err) {
         console.error(err);
@@ -740,25 +906,21 @@ function bindUI() {
   await cargarRegiones();
 
   try {
-    // ✅ Carga MASTER: /capas/grupos.json (N grupos en un solo JSON)
     GROUPS = await loadGroupsMaster(GROUPS_URL);
-
-    if (!GROUPS.length) {
-      toast("⚠️ No hay grupos cargados", 2600);
-    } else {
-      toast(`✅ Grupos cargados: ${GROUPS.map(g => g.group_name).join(", ")}`, 2200);
-    }
+    if (!GROUPS.length) toast("⚠️ No hay grupos cargados", 2600);
+    else toast(`✅ Grupos: ${GROUPS.map(g => g.group_name).join(", ")}`, 1600);
   } catch (e) {
     console.error(e);
     toast("⚠️ No pude cargar grupos (ver consola)", 2800);
     GROUPS = [];
   }
 
-  // Precarga liviana: primer archivo del primer grupo habilitado
-  const firstGroup = GROUPS.find(g => g.enabled) || GROUPS[0];
+  // ✅ Precarga liviana: primer archivo del primer grupo habilitado
+  const firstGroup = GROUPS.find(g => g.enabled !== false) || GROUPS[0];
   const firstFile = firstGroup?.files?.[0];
   if (firstFile) ensureFileLoaded(firstFile).catch(() => {});
 
+  // ✅ Trigger inicial de estadísticas
   scheduleStatsUpdate();
-  toast("Listo ✅ Clic para vincular 1 polígono ganador por GRUPO y abrir MapaOut.", 2600);
+  toast("Listo ✅ Mueve/zoom para ver resumen por grupo. Click para abrir MapaOut.", 2200);
 })();
