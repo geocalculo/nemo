@@ -2,10 +2,17 @@
  * GeoNEMO - mapaout.js
  * Lee localStorage["geonemo_out_v2"], renderiza resultados por grupo
  * con mapas individuales, lazy-draw de geometrías, y formateo inteligente.
+ *
+ * ✅ Ajustes integrados (Feb-2026):
+ * - Resumen humano (versión B) + menciona >300 km
+ * - Foco visual en mapas de detalle (pulso + flecha cerca del área)
+ * - Para >300 km: NO mapa vacío, solo card con info relevante
  ************************************************************/
 
 const STORAGE_KEY = "geonemo_out_v2";
 const MAX_DISTANCE_FOR_DRAW = 300000; // 300 km - más allá no dibujamos geometría
+
+const HAS_TURF = typeof turf !== "undefined";
 
 let mainMap = null;
 let pointMarker = null;
@@ -14,9 +21,48 @@ let groupLayers = {}; // { groupId: leaflet layer }
 let mainMapBounds = null; // Guardar bounds originales para recentrar
 
 /* ===========================
+   CSS runtime (pulso + flecha)
+=========================== */
+(function injectFocusCSS() {
+  const id = "geonemo-focus-css";
+  if (document.getElementById(id)) return;
+
+  const style = document.createElement("style");
+  style.id = id;
+  style.textContent = `
+    /* Marker pulso */
+    .geonemo-pulse {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background: rgba(34,197,94,0.35);
+      box-shadow: 0 0 0 0 rgba(34,197,94,0.45);
+      animation: geonemoPulse 1.8s infinite;
+      border: 2px solid rgba(34,197,94,0.9);
+    }
+    @keyframes geonemoPulse {
+      0%   { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(34,197,94,0.45); opacity: 1; }
+      70%  { transform: scale(1.45); box-shadow: 0 0 0 16px rgba(34,197,94,0.0); opacity: 0.2; }
+      100% { transform: scale(0.85); box-shadow: 0 0 0 0 rgba(34,197,94,0.0); opacity: 0.0; }
+    }
+    /* Flecha */
+    .geonemo-arrow {
+      font-size: 18px;
+      line-height: 18px;
+      color: rgba(34,197,94,0.95);
+      text-shadow: 0 1px 8px rgba(0,0,0,0.25);
+      transform: translate(-2px, -18px) rotate(10deg);
+      user-select: none;
+      pointer-events: none;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+/* ===========================
    Scroll helpers
 =========================== */
-window.scrollToGroup = function(index) {
+window.scrollToGroup = function (index) {
   const card = document.querySelector(`[data-index="${index}"]`);
   if (card) {
     card.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -32,11 +78,11 @@ window.scrollToGroup = function(index) {
   }
 };
 
-window.scrollToTop = function() {
+window.scrollToTop = function () {
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
-window.recenterMainMap = function() {
+window.recenterMainMap = function () {
   if (mainMap && mainMapBounds) {
     mainMap.fitBounds(mainMapBounds, { padding: [40, 40], animate: true });
     toast("🎯 Mapa recentrado", 1200);
@@ -74,8 +120,8 @@ function fmtArea(m2) {
 function normalizarRegiones(regionStr) {
   if (!regionStr) return [];
   const separators = /[;,\/]|\s+y\s+/gi;
-  const partes = regionStr.split(separators).map(r => r.trim()).filter(Boolean);
-  return partes.map(r => r.replace(/^Región\s+(de\s+)?/i, "").trim());
+  const partes = regionStr.split(separators).map((r) => r.trim()).filter(Boolean);
+  return partes.map((r) => r.replace(/^Región\s+(de\s+)?/i, "").trim());
 }
 
 function getDictamen(linkType) {
@@ -90,19 +136,76 @@ function getDictamen(linkType) {
 function calcularOrientacion(lat1, lng1, lat2, lng2) {
   const dLng = lng2 - lng1;
   const dLat = lat2 - lat1;
-  
-  let angulo = Math.atan2(dLng, dLat) * 180 / Math.PI;
+
+  let angulo = (Math.atan2(dLng, dLat) * 180) / Math.PI;
   if (angulo < 0) angulo += 360;
-  
+
   const direcciones = [
-    "N", "NNE", "NE", "ENE", 
+    "N", "NNE", "NE", "ENE",
     "E", "ESE", "SE", "SSE",
     "S", "SSO", "SO", "OSO",
-    "O", "ONO", "NO", "NNO"
+    "O", "ONO", "NO", "NNO",
   ];
-  
+
   const idx = Math.round(angulo / 22.5) % 16;
   return direcciones[idx];
+}
+
+function isVisualizable(link) {
+  const d = link?.distance_m;
+  return link?.feature && d != null && isFinite(d) && d <= MAX_DISTANCE_FOR_DRAW;
+}
+
+function isFar(link) {
+  const d = link?.distance_m;
+  return link?.feature && d != null && isFinite(d) && d > MAX_DISTANCE_FOR_DRAW;
+}
+
+/* ===========================
+   Focus marker (pulso + flecha) en mapas de detalle
+=========================== */
+function addFocusMarker(map, featureOrLayer) {
+  if (!map) return;
+
+  let latlng = null;
+
+  // Preferimos Turf centroid si existe
+  if (HAS_TURF && featureOrLayer && featureOrLayer.type) {
+    try {
+      const c = turf.centroid(featureOrLayer);
+      const [lng, lat] = c.geometry.coordinates;
+      latlng = L.latLng(lat, lng);
+    } catch (e) {}
+  }
+
+  // Fallback: bounds center del layer Leaflet
+  if (!latlng && featureOrLayer && typeof featureOrLayer.getBounds === "function") {
+    try {
+      latlng = featureOrLayer.getBounds().getCenter();
+    } catch (e) {}
+  }
+
+  if (!latlng) return;
+
+  // Pulso (divIcon)
+  const pulseIcon = L.divIcon({
+    className: "",
+    html: `<div class="geonemo-pulse"></div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
+  });
+
+  L.marker(latlng, { icon: pulseIcon, interactive: false }).addTo(map);
+
+  // Flecha (divIcon)
+  const arrowIcon = L.divIcon({
+    className: "",
+    html: `<div class="geonemo-arrow">➤</div>`,
+    iconSize: [18, 18],
+    iconAnchor: [6, 10],
+  });
+
+  L.marker(latlng, { icon: arrowIcon, interactive: false }).addTo(map);
 }
 
 /* ===========================
@@ -137,12 +240,12 @@ function initMainMap(lat, lng, links) {
   links.forEach((link, idx) => {
     const distanceM = link.distance_m;
     const feature = link.feature;
-    
-    if (!feature || !distanceM || distanceM > MAX_DISTANCE_FOR_DRAW) return;
+
+    if (!feature || distanceM == null || !isFinite(distanceM) || distanceM > MAX_DISTANCE_FOR_DRAW) return;
 
     const data = extractGroupData(link);
     const dictamen = getDictamen(link.link_type);
-    
+
     let color = "#22c55e";
     let fillOpacity = 0.12;
     if (link.link_type === "inside") {
@@ -176,9 +279,9 @@ function initMainMap(lat, lng, links) {
           <span class="badgeMini ${dictamen.class}" style="font-size:0.75em;padding:2px 6px;">${dictamen.text}</span>
           <span style="font-size:0.85em;">${link.link_type === "inside" ? "0 km" : distKm}</span>
         </div>
-        <button 
-          onclick="scrollToGroup(${idx})" 
-          class="btnSm btn--primary" 
+        <button
+          onclick="scrollToGroup(${idx})"
+          class="btnSm btn--primary"
           style="width:100%;font-size:0.8em;padding:4px 8px;"
         >
           ↓ Ver detalle
@@ -209,76 +312,120 @@ function initMainMap(lat, lng, links) {
 }
 
 /* ===========================
-   Generar resumen textual de áreas detectadas
+   Generar resumen humano (B) + menciona >300 km
 =========================== */
 function generarResumenAreas(lat, lng, links) {
   const resumenEl = document.getElementById("resumenAreas");
   if (!resumenEl) return;
 
-  const areasDetectadas = links.filter(link => {
-    return link.feature && link.distance_m != null && link.distance_m <= MAX_DISTANCE_FOR_DRAW;
+  // Cerca: visualizable <=300; Lejos: >300 (igual relevante)
+  const near = links.filter(isVisualizable);
+  const far = links.filter(isFar);
+
+  // Orden: inside primero, luego por distancia
+  near.sort((a, b) => {
+    if (a.link_type === "inside" && b.link_type !== "inside") return -1;
+    if (b.link_type === "inside" && a.link_type !== "inside") return 1;
+    return (a.distance_m ?? Infinity) - (b.distance_m ?? Infinity);
   });
 
-  if (!areasDetectadas.length) {
-    resumenEl.innerHTML = `
-      <p class="muted" style="margin:0;font-size:0.9rem;">
-        No se detectaron áreas protegidas en un radio de 300 km del punto consultado.
-      </p>
-    `;
-    return;
-  }
-
-  let html = '<div style="font-size:0.9rem;line-height:1.6;color:var(--text);">';
-  
-  areasDetectadas.forEach((link, idx) => {
+  // Preparar “frases” (usamos hasta 2 en el párrafo principal)
+  const pickPhrase = (link) => {
     const data = extractGroupData(link);
-    const dictamen = getDictamen(link.link_type);
-    const distKm = link.distance_m / 1000;
+    const grupoNombre = link.layer_name || link.layer_id;
+    const areaNombre = data.nombre !== "—" ? data.nombre : "área sin nombre";
     const isInside = link.link_type === "inside";
-    
-    let orientacion = "";
-    if (!isInside && link.feature?.geometry) {
+
+    let orientacion = null;
+    if (!isInside && HAS_TURF && link.feature?.geometry) {
       try {
         const centroid = turf.centroid(link.feature);
         const [centLng, centLat] = centroid.geometry.coordinates;
         orientacion = calcularOrientacion(lat, lng, centLat, centLng);
       } catch (e) {
-        orientacion = "—";
+        orientacion = null;
       }
     }
 
-    let superficie = data.superficie || "—";
-    if (superficie === "—" && link.feature?.geometry) {
-      try {
-        const areaM2 = turf.area(link.feature);
-        superficie = fmtArea(areaM2);
-      } catch (e) {}
+    const distKm = link.distance_m != null ? (link.distance_m / 1000) : null;
+
+    if (isInside) {
+      return {
+        grupoNombre,
+        areaNombre,
+        kind: "inside",
+        text: `estás dentro del área <em>${areaNombre}</em> (${grupoNombre})`,
+      };
     }
 
-    const grupoNombre = link.layer_name || link.layer_id;
-    const areaNombre = data.nombre !== "—" ? data.nombre : "área sin nombre";
-    
-    if (isInside) {
-      html += `
-        El punto consultado está <strong>dentro</strong> del grupo <strong>${grupoNombre}</strong>, 
-        en el área <em>${areaNombre}</em> (${superficie}).
-      `;
-    } else {
-      html += `
-        El punto consultado está asociado al grupo <strong>${grupoNombre}</strong>, 
-        con el área <em>${areaNombre}</em> (${superficie}), 
-        ubicada a <strong>${distKm.toFixed(2)} km</strong> de distancia 
-        hacia el <strong>${orientacion}</strong>.
-      `;
+    const dirTxt = orientacion ? ` hacia el <strong>${orientacion}</strong>` : "";
+    return {
+      grupoNombre,
+      areaNombre,
+      kind: "near",
+      text: `la <em>${areaNombre}</em> (${grupoNombre}), a <strong>${distKm.toFixed(2)} km</strong>${dirTxt}`,
+    };
+  };
+
+  // Si no hay nada, mensaje simple
+  if (!near.length && !far.length) {
+    resumenEl.innerHTML = `
+      <p class="muted" style="margin:0;font-size:0.9rem;">
+        No se encontraron resultados asociados a la consulta.
+      </p>
+    `;
+    return;
+  }
+
+  // Si hay dentro, eso manda
+  const inside = near.find((l) => l.link_type === "inside");
+  const first = near[0] || null;
+  const second = near[1] || null;
+
+  let mainHTML = `<div style="font-size:0.95rem;line-height:1.7;color:var(--text);">`;
+
+  if (inside) {
+    const p = pickPhrase(inside);
+    mainHTML += `
+      <strong>Para este punto, lo más relevante es que ${p.text}.</strong>
+    `;
+    // si además hay otro cercano distinto, lo mencionamos como antecedente
+    const next = near.find((l) => l !== inside);
+    if (next) {
+      const p2 = pickPhrase(next);
+      mainHTML += ` Como antecedente cercano adicional, aparece ${p2.text}.`;
     }
-    
-    if (idx < areasDetectadas.length - 1) {
-      html += '<br><br>';
+  } else if (first) {
+    const p1 = pickPhrase(first);
+    mainHTML += `
+      <strong>Para este punto, lo más relevante es que la referencia protegida más cercana corresponde al grupo <strong>${p1.grupoNombre}</strong>:</strong>
+      <em>${p1.areaNombre}</em>, ubicada a <strong>${(first.distance_m / 1000).toFixed(2)} km</strong>${p1.kind === "near" ? (p1.text.includes("hacia el") ? p1.text.slice(p1.text.indexOf(" hacia")) : "") : ""}.
+    `;
+    if (second) {
+      const p2 = pickPhrase(second);
+      mainHTML += ` Como segundo antecedente, aparece ${p2.text}.`;
     }
-  });
-  
-  html += '</div>';
-  resumenEl.innerHTML = html;
+  } else {
+    // no hay cerca, pero sí lejos
+    mainHTML += `
+      <span class="muted">
+        No se detectaron áreas visualizables dentro de <strong>300 km</strong> del punto consultado.
+      </span>
+    `;
+  }
+
+  if (far.length) {
+    const n = far.length;
+    mainHTML += `
+      <div class="muted" style="margin-top:10px;">
+        Adicionalmente, se identifican <strong>${n}</strong> área${n !== 1 ? "s" : ""} protegida${n !== 1 ? "s" : ""}
+        fuera del radio de visualización (<strong>más de 300 km</strong>), las cuales se listan al final como referencia contextual.
+      </div>
+    `;
+  }
+
+  mainHTML += `</div>`;
+  resumenEl.innerHTML = mainHTML;
 }
 
 /* ===========================
@@ -326,12 +473,17 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
     } catch (e) {
       map.setView([lat, lng], 12);
     }
+
+    // ✅ Foco visual: pulso + flecha cerca del área (centroide)
+    try {
+      addFocusMarker(map, feature);
+    } catch (e) {}
   } else {
     map.setView([lat, lng], 12);
   }
 
   groupMaps[containerId] = map;
-  
+
   if (layer) {
     const toggleBtnId = `toggle-${containerId}`;
     const toggleBtn = document.getElementById(toggleBtnId);
@@ -362,7 +514,7 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
       });
     }
   }
-  
+
   setTimeout(() => map.invalidateSize(true), 100);
 }
 
@@ -372,7 +524,7 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
 function extractGroupData(link) {
   const props = link.feature?.properties || {};
   const layerId = (link.layer_id || "").toLowerCase();
-  
+
   let nombre = "—";
   let categoria = null;
   let superficie = null;
@@ -385,7 +537,7 @@ function extractGroupData(link) {
   if (layerId.includes("snaspe")) {
     nombre = props.NOMBRE_TOT || props.NOMBRE_UNI || props.NOMBRE || props.nombre || "—";
     categoria = props.CATEGORIA || props.TIPO_DE_PR || props.categoria || null;
-    
+
     if (props.SUPERFICIE != null) {
       const s = String(props.SUPERFICIE).toLowerCase();
       if (s.includes("km") || s.includes("km2") || s.includes("km²")) {
@@ -399,8 +551,8 @@ function extractGroupData(link) {
         }
       }
     }
-    
-    if (!superficie && link.feature?.geometry) {
+
+    if (!superficie && HAS_TURF && link.feature?.geometry) {
       try {
         const areaM2 = turf.area(link.feature);
         superficie = fmtArea(areaM2);
@@ -418,7 +570,7 @@ function extractGroupData(link) {
   if (layerId.includes("ramsar")) {
     nombre = props.Nombre || props.nombre || props.NOMBRE || "—";
     tipo = props.Tipo || props.tipo || null;
-    
+
     const reg = props.Nomreg || props.nomreg || null;
     const prov = props.Nomprov || props.nomprov || null;
     const com = props.Nomcom || props.nomcom || null;
@@ -428,8 +580,9 @@ function extractGroupData(link) {
 
     if (props.SUPERFICIE != null) {
       const s = String(props.SUPERFICIE);
-      superficie = s.includes("ha") || s.includes("km") ? s : fmtArea(parseFloat(s) * 10000);
-    } else if (link.feature?.geometry) {
+      const n = parseFloat(String(props.SUPERFICIE).replace(",", "."));
+      superficie = s.includes("ha") || s.includes("km") ? s : (isFinite(n) ? fmtArea(n * 10000) : s);
+    } else if (HAS_TURF && link.feature?.geometry) {
       try {
         const areaM2 = turf.area(link.feature);
         superficie = fmtArea(areaM2);
@@ -450,24 +603,24 @@ function extractGroupData(link) {
 }
 
 /* ===========================
-   Renderizar tarjeta de grupo
+   Renderizar tarjeta de grupo (≤300 km) con mapa
 =========================== */
 function renderGroupCard(link, clickLat, clickLng, index) {
   const dictamen = getDictamen(link.link_type);
   const distanceM = link.distance_m;
   const distanceBorderM = link.distance_border_m;
   const data = extractGroupData(link);
+
   const groupId = `group-${index}`;
   const mapId = `map-${groupId}`;
 
   const distKm = distanceM != null ? fmtKm(distanceM) : "—";
   const borderKm = distanceBorderM != null ? fmtKm(distanceBorderM) : null;
   const isInside = link.link_type === "inside";
-  const isFar = distanceM != null && distanceM > MAX_DISTANCE_FOR_DRAW;
 
   const bodyId = `body-${groupId}`;
   const toggleBtnId = `toggle-${mapId}`;
-  
+
   let bodyHTML = `
     <div class="groupBody" id="${bodyId}">
       <div class="groupGrid">
@@ -475,16 +628,10 @@ function renderGroupCard(link, clickLat, clickLng, index) {
           <div class="groupMapHead">
             <div class="left">${data.nombre}</div>
             <div class="right">
-              ${isFar ? 
-                '<span class="small muted">+300 km (sin mapa)</span>' : 
-                `<button class="btnSm btn--ghost" id="${toggleBtnId}" type="button">🗺️ Solo área</button>`
-              }
+              <button class="btnSm btn--ghost" id="${toggleBtnId}" type="button">🗺️ Solo área</button>
             </div>
           </div>
-          ${isFar ? 
-            '<div class="groupMap" style="display:flex;align-items:center;justify-content:center;background:#f5f5f5;color:#999;">Distancia muy grande para visualizar</div>' :
-            `<div class="groupMap" id="${mapId}"></div>`
-          }
+          <div class="groupMap" id="${mapId}"></div>
         </div>
 
         <div class="groupSide">
@@ -497,33 +644,23 @@ function renderGroupCard(link, clickLat, clickLng, index) {
               <div class="kpi__label">Distancia mínima</div>
               <div class="kpi__value">${isInside ? "0 km (dentro)" : distKm}</div>
             </div>
-            ${borderKm ? `
+            ${borderKm && link.link_type !== "none" ? `
             <div>
               <div class="kpi__label">Distancia al borde</div>
               <div class="kpi__value">${borderKm}</div>
             </div>
-            ` : ''}
+            ` : ""}
           </div>
 
           <div class="groupAttrs">
             <table class="attrTable">
   `;
 
-  if (data.categoria) {
-    bodyHTML += `<tr><td class="k">Categoría</td><td class="v">${data.categoria}</td></tr>`;
-  }
-  if (data.tipo) {
-    bodyHTML += `<tr><td class="k">Tipo</td><td class="v">${data.tipo}</td></tr>`;
-  }
-  if (data.superficie) {
-    bodyHTML += `<tr><td class="k">Superficie</td><td class="v">${data.superficie}</td></tr>`;
-  }
-  if (data.regiones.length) {
-    bodyHTML += `<tr><td class="k">Región(es)</td><td class="v">${data.regiones.join(", ")}</td></tr>`;
-  }
-  if (data.ubicacion) {
-    bodyHTML += `<tr><td class="k">Ubicación</td><td class="v">${data.ubicacion}</td></tr>`;
-  }
+  if (data.categoria) bodyHTML += `<tr><td class="k">Categoría</td><td class="v">${data.categoria}</td></tr>`;
+  if (data.tipo) bodyHTML += `<tr><td class="k">Tipo</td><td class="v">${data.tipo}</td></tr>`;
+  if (data.superficie) bodyHTML += `<tr><td class="k">Superficie</td><td class="v">${data.superficie}</td></tr>`;
+  if (data.regiones.length) bodyHTML += `<tr><td class="k">Región(es)</td><td class="v">${data.regiones.join(", ")}</td></tr>`;
+  if (data.ubicacion) bodyHTML += `<tr><td class="k">Ubicación</td><td class="v">${data.ubicacion}</td></tr>`;
   if (data.decreto) {
     let decretoHTML = data.decreto;
     if (data.decretoLink) {
@@ -535,7 +672,7 @@ function renderGroupCard(link, clickLat, clickLng, index) {
   bodyHTML += `
             </table>
           </div>
-          
+
           <div style="margin-top:12px;text-align:center;">
             <button class="btnSm btn--ghost" onclick="scrollToTop()" type="button">↑ Volver arriba</button>
           </div>
@@ -574,31 +711,159 @@ function renderGroupCard(link, clickLat, clickLng, index) {
 
   const head = document.querySelector(`[data-target="${bodyId}"]`);
   const body = document.getElementById(bodyId);
+
   if (head && body) {
     head.addEventListener("click", () => {
       const isHidden = body.classList.toggle("isHidden");
       const chevron = head.querySelector(".groupChevron");
       if (chevron) chevron.textContent = isHidden ? "▶" : "▼";
-      
-      if (!isHidden && !isFar && !groupMaps[mapId]) {
+
+      if (!isHidden && !groupMaps[mapId]) {
         setTimeout(() => {
           initGroupMap(mapId, clickLat, clickLng, link.feature, distanceM);
         }, 100);
       }
     });
-
-    if (index > 0) {
-      body.classList.add("isHidden");
-      const chevron = head.querySelector(".groupChevron");
-      if (chevron) chevron.textContent = "▶";
-    } else {
-      if (!isFar) {
-        setTimeout(() => {
-          initGroupMap(mapId, clickLat, clickLng, link.feature, distanceM);
-        }, 200);
-      }
-    }
   }
+}
+
+/* ===========================
+   Renderizar tarjeta LITE (>300 km) SIN MAPA (solo info relevante)
+=========================== */
+function renderGroupCardLite(link, index) {
+  const dictamen = getDictamen(link.link_type);
+  const distanceM = link.distance_m;
+  const distanceBorderM = link.distance_border_m;
+  const data = extractGroupData(link);
+
+  const groupId = `far-${index}`;
+  const bodyId = `body-${groupId}`;
+
+  const distKm = distanceM != null ? fmtKm(distanceM) : "—";
+  const borderKm = distanceBorderM != null ? fmtKm(distanceBorderM) : null;
+  const isInside = link.link_type === "inside";
+
+  // ✅ SIN MAPA: solo lado derecho (KPIs + tabla)
+  let bodyHTML = `
+    <div class="groupBody isHidden" id="${bodyId}">
+      <div class="groupGrid" style="grid-template-columns: 1fr;">
+        <div class="groupSide" style="max-width: 100%;">
+          <div class="groupKpis">
+            <div>
+              <div class="kpi__label">Dictamen</div>
+              <div class="badge badge--${dictamen.class}">${dictamen.text}</div>
+            </div>
+            <div>
+              <div class="kpi__label">Distancia mínima</div>
+              <div class="kpi__value">${isInside ? "0 km (dentro)" : distKm}</div>
+            </div>
+            ${borderKm && link.link_type !== "none" ? `
+            <div>
+              <div class="kpi__label">Distancia al borde</div>
+              <div class="kpi__value">${borderKm}</div>
+            </div>
+            ` : ""}
+            <div>
+              <div class="kpi__label">Visualización</div>
+              <div class="kpi__value"><span class="muted">&gt; 300 km (sin mapa)</span></div>
+            </div>
+          </div>
+
+          <div class="groupAttrs">
+            <table class="attrTable">
+  `;
+
+  if (data.categoria) bodyHTML += `<tr><td class="k">Categoría</td><td class="v">${data.categoria}</td></tr>`;
+  if (data.tipo) bodyHTML += `<tr><td class="k">Tipo</td><td class="v">${data.tipo}</td></tr>`;
+  if (data.superficie) bodyHTML += `<tr><td class="k">Superficie</td><td class="v">${data.superficie}</td></tr>`;
+  if (data.regiones.length) bodyHTML += `<tr><td class="k">Región(es)</td><td class="v">${data.regiones.join(", ")}</td></tr>`;
+  if (data.ubicacion) bodyHTML += `<tr><td class="k">Ubicación</td><td class="v">${data.ubicacion}</td></tr>`;
+  if (data.decreto) {
+    let decretoHTML = data.decreto;
+    if (data.decretoLink) {
+      decretoHTML += ` <a href="${data.decretoLink}" target="_blank" rel="noopener" style="color:#65a30d;">🔗</a>`;
+    }
+    bodyHTML += `<tr><td class="k">Decreto</td><td class="v">${decretoHTML}</td></tr>`;
+  }
+
+  bodyHTML += `
+            </table>
+          </div>
+
+          <div style="margin-top:12px;text-align:center;">
+            <button class="btnSm btn--ghost" onclick="scrollToTop()" type="button">↑ Volver arriba</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const headHTML = `
+    <div class="groupHead" data-target="${bodyId}">
+      <div class="groupTitle">
+        <div class="groupTitle__name">${link.layer_name || link.layer_id}</div>
+        <div class="groupTitle__sub">${data.nombre}</div>
+      </div>
+      <div class="groupMeta">
+        <div class="badgeMini ${dictamen.class}">${dictamen.text}</div>
+        <div class="badgeMini">${isInside ? "0 km" : distKm}</div>
+        <div class="badgeMini muted" style="opacity:0.9;">sin mapa</div>
+        <div class="groupChevron">▶</div>
+      </div>
+    </div>
+  `;
+
+  const cardHTML = `
+    <div class="groupCard" data-index="${index}">
+      ${headHTML}
+      ${bodyHTML}
+    </div>
+  `;
+
+  const wrapFar = ensureFarSectionContainer();
+  if (!wrapFar) return;
+
+  const div = document.createElement("div");
+  div.innerHTML = cardHTML;
+  wrapFar.appendChild(div.firstElementChild);
+
+  const head = wrapFar.querySelector(`[data-target="${bodyId}"]`);
+  const body = document.getElementById(bodyId);
+  if (head && body) {
+    head.addEventListener("click", () => {
+      const isHidden = body.classList.toggle("isHidden");
+      const chevron = head.querySelector(".groupChevron");
+      if (chevron) chevron.textContent = isHidden ? "▶" : "▼";
+    });
+  }
+}
+
+function ensureFarSectionContainer() {
+  const mainWrap = document.getElementById("groupsWrap");
+  if (!mainWrap) return null;
+
+  let farWrap = document.getElementById("groupsWrapFar");
+  if (farWrap) return farWrap;
+
+  const hr = document.createElement("div");
+  hr.style.margin = "18px 0 10px";
+  hr.style.borderTop = "1px solid rgba(0,0,0,0.10)";
+  mainWrap.appendChild(hr);
+
+  const h = document.createElement("div");
+  h.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0 12px;">
+      <div style="font-weight:700;">Fuera de 300 km (sin mapa)</div>
+      <div class="muted" style="font-size:0.9em;">Resultados detectados como referencia contextual</div>
+    </div>
+  `;
+  mainWrap.appendChild(h);
+
+  farWrap = document.createElement("div");
+  farWrap.id = "groupsWrapFar";
+  mainWrap.appendChild(farWrap);
+
+  return farWrap;
 }
 
 /* ===========================
@@ -631,6 +896,14 @@ function loadAndRender() {
       return dA - dB;
     });
 
+    const near = sorted.filter(isVisualizable).sort((a, b) => {
+      if (a.link_type === "inside" && b.link_type !== "inside") return -1;
+      if (b.link_type === "inside" && a.link_type !== "inside") return 1;
+      return (a.distance_m ?? Infinity) - (b.distance_m ?? Infinity);
+    });
+
+    const far = sorted.filter(isFar);
+
     initMainMap(click.lat, click.lng, sorted);
     generarResumenAreas(click.lat, click.lng, sorted);
 
@@ -644,12 +917,50 @@ function loadAndRender() {
       countEl.textContent = `${sorted.length} grupo${sorted.length !== 1 ? "s" : ""}`;
     }
 
-    sorted.forEach((link, idx) => {
+    // Mapear índice original para scrollToGroup(idx)
+    const originalIndex = new Map();
+    sorted.forEach((l, i) => originalIndex.set(l, i));
+
+    // Render near con mapas
+    near.forEach((link) => {
+      const idx = originalIndex.get(link);
       renderGroupCard(link, click.lat, click.lng, idx);
     });
 
-    toast(`✅ ${sorted.length} grupo(s) procesados`, 2000);
+    // Lazy init: abrir el primer near por defecto
+    if (near.length) {
+      const firstIdx = originalIndex.get(near[0]);
+      const firstBody = document.getElementById(`body-group-${firstIdx}`);
+      const firstHead = document.querySelector(`[data-target="body-group-${firstIdx}"]`);
+      const firstChevron = firstHead?.querySelector(".groupChevron");
 
+      if (firstBody && firstHead) {
+        // Dejar abierto
+        firstBody.classList.remove("isHidden");
+        if (firstChevron) firstChevron.textContent = "▼";
+        setTimeout(() => {
+          initGroupMap(`map-group-${firstIdx}`, click.lat, click.lng, near[0].feature, near[0].distance_m);
+        }, 200);
+      }
+    }
+
+    // Cerrar los demás near por defecto
+    near.slice(1).forEach((link) => {
+      const idx = originalIndex.get(link);
+      const body = document.getElementById(`body-group-${idx}`);
+      const head = document.querySelector(`[data-target="body-group-${idx}"]`);
+      const chevron = head?.querySelector(".groupChevron");
+      if (body) body.classList.add("isHidden");
+      if (chevron) chevron.textContent = "▶";
+    });
+
+    // Render far al final (SIN MAPA)
+    far.forEach((link) => {
+      const idx = originalIndex.get(link);
+      renderGroupCardLite(link, idx);
+    });
+
+    toast(`✅ ${sorted.length} grupo(s) procesados`, 2000);
   } catch (e) {
     console.error("Error cargando datos:", e);
     document.body.innerHTML = `
@@ -719,11 +1030,14 @@ function bindUI() {
   const btnCopyLink = document.getElementById("btnCopyLink");
   if (btnCopyLink) {
     btnCopyLink.addEventListener("click", () => {
-      navigator.clipboard.writeText(window.location.href).then(() => {
-        toast("✅ Link copiado", 1500);
-      }).catch(() => {
-        toast("⚠️ No se pudo copiar el link", 2000);
-      });
+      navigator.clipboard
+        .writeText(window.location.href)
+        .then(() => {
+          toast("✅ Link copiado", 1500);
+        })
+        .catch(() => {
+          toast("⚠️ No se pudo copiar el link", 2000);
+        });
     });
   }
 }
