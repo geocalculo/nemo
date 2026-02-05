@@ -7,6 +7,15 @@
  * - Resumen humano (versión B) + menciona >300 km
  * - Foco visual en mapas de detalle (pulso + flecha cerca del área)
  * - Para >300 km: NO mapa vacío, solo card con info relevante
+ *
+ * ✅ Fix Feb-2026 (Superficie universal):
+ * - Superficie se calcula de forma robusta para CUALQUIER grupo:
+ *   1) Busca campos de superficie/área en properties (cualquier nombre típico)
+ *   2) Parsea unidades (km² / km2 / ha / m² / m2 / número sin unidad)
+ *   3) Si no hay valor confiable, usa turf.area(feature)
+ *
+ * ✅ Fix Feb-2026 (Mapa principal monocromático):
+ * - Mapa resumen superior: satelital Esri con filtro B/N SOLO en la capa base
  ************************************************************/
 
 const STORAGE_KEY = "geonemo_out_v2";
@@ -162,6 +171,124 @@ function isFar(link) {
 }
 
 /* ===========================
+   SUPERFICIE (UNIVERSAL)
+=========================== */
+
+// Normaliza keys para comparar sin tildes/espacios
+function normKey(k) {
+  return String(k || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+// Parsea un valor (string/number) a m² usando unidades explícitas,
+// o heurística si viene sin unidad.
+function parseSurfaceToM2(raw) {
+  if (raw == null) return null;
+
+  const isNum = typeof raw === "number" && isFinite(raw);
+  const s = String(raw).trim();
+  if (!s) return null;
+
+  const num = isNum
+    ? raw
+    : parseFloat(
+        s
+          .toLowerCase()
+          .replace(/\s/g, "")
+          .replace(/[^\d.,-]/g, "")
+          .replace(",", ".")
+      );
+
+  if (!isFinite(num)) return null;
+
+  const sl = s.toLowerCase();
+
+  // Unidades explícitas
+  if (sl.includes("km²") || sl.includes("km2") || sl.includes("km^2") || sl.includes("km")) return num * 1e6;
+  if (sl.includes("ha") || sl.includes("hect")) return num * 10000;
+  if (sl.includes("m²") || sl.includes("m2")) return num;
+
+  // Sin unidades: heurística conservadora
+  // - Muchos catastro/ambiental vienen en ha (valores “medianos”).
+  // - Si es gigantesco, probablemente ya es m².
+  if (num < 5_000_000) return num * 10000; // asume ha
+  return num; // asume m²
+}
+
+// Elige "mejor" campo de superficie desde properties
+function pickSurfaceProp(props) {
+  if (!props || typeof props !== "object") return null;
+
+  const entries = Object.entries(props);
+
+  // score por nombre de campo (más alto = más probable)
+  const scoreKey = (kNorm) => {
+    let s = 0;
+    if (kNorm.includes("superficie")) s += 100;
+    if (kNorm.includes("area")) s += 60;
+    if (kNorm.includes("sup")) s += 40;
+
+    if (kNorm.includes("ha")) s += 25;
+    if (kNorm.includes("hect")) s += 25;
+    if (kNorm.includes("km2") || kNorm.includes("km")) s += 20;
+    if (kNorm.includes("m2")) s += 10;
+
+    // penaliza cosas típicas que NO son superficie
+    if (kNorm.includes("areaprotegida") === false && kNorm.includes("areanombre")) s -= 40;
+    if (kNorm.includes("length") || kNorm.includes("perim") || kNorm.includes("perimeter")) s -= 40;
+
+    return s;
+  };
+
+  let best = null;
+
+  for (const [k, v] of entries) {
+    const kn = normKey(k);
+    const sc = scoreKey(kn);
+
+    if (sc <= 0) continue;
+
+    // Debe parecer parseable (no texto largo sin números)
+    const vStr = String(v ?? "").trim();
+    if (!vStr) continue;
+    const hasDigit = /[\d]/.test(vStr);
+    if (!hasDigit) continue;
+
+    if (!best || sc > best.score) {
+      best = { key: k, value: v, score: sc };
+    }
+  }
+
+  return best; // {key, value, score} | null
+}
+
+function computeSurfaceM2(feature) {
+  if (!feature) return null;
+
+  const props = feature?.properties || {};
+  const picked = pickSurfaceProp(props);
+
+  // 1) usar propiedad si existe y se puede parsear
+  if (picked) {
+    const m2 = parseSurfaceToM2(picked.value);
+    if (m2 != null && isFinite(m2) && m2 > 0) return m2;
+  }
+
+  // 2) fallback a área geométrica
+  if (HAS_TURF && feature?.geometry) {
+    try {
+      const m2 = turf.area(feature);
+      if (m2 != null && isFinite(m2) && m2 > 0) return m2;
+    } catch (e) {}
+  }
+
+  return null;
+}
+
+/* ===========================
    Focus marker (pulso + flecha) en mapas de detalle
 =========================== */
 function addFocusMarker(map, featureOrLayer) {
@@ -210,7 +337,23 @@ function addFocusMarker(map, featureOrLayer) {
 
 /* ===========================
    Mapa principal (punto + geometrías resumen)
+   ✅ Satelital Esri en Blanco y Negro (solo base tiles)
 =========================== */
+function applyMainMapMonochrome(mainMapInstance) {
+  try {
+    const container = mainMapInstance?.getContainer?.();
+    if (!container) return;
+
+    // Leaflet separa panes; filtramos SOLO tile-pane (base raster)
+    const tilePane = container.querySelector(".leaflet-pane.leaflet-tile-pane");
+    if (!tilePane) return;
+
+    // B/N + un poco de contraste/brillo para legibilidad
+    tilePane.style.filter = "grayscale(100%) contrast(1.08) brightness(1.05)";
+    tilePane.style.webkitFilter = tilePane.style.filter;
+  } catch (_) {}
+}
+
 function initMainMap(lat, lng, links) {
   mainMap = L.map("map", { zoomControl: true, preferCanvas: true }).setView([lat, lng], 12);
 
@@ -222,6 +365,9 @@ function initMainMap(lat, lng, links) {
       crossOrigin: true,
     }
   ).addTo(mainMap);
+
+  // ✅ aplica filtro B/N SOLO en el mapa principal
+  applyMainMapMonochrome(mainMap);
 
   pointMarker = L.circleMarker([lat, lng], {
     radius: 8,
@@ -318,18 +464,15 @@ function generarResumenAreas(lat, lng, links) {
   const resumenEl = document.getElementById("resumenAreas");
   if (!resumenEl) return;
 
-  // Cerca: visualizable <=300; Lejos: >300 (igual relevante)
   const near = links.filter(isVisualizable);
   const far = links.filter(isFar);
 
-  // Orden: inside primero, luego por distancia
   near.sort((a, b) => {
     if (a.link_type === "inside" && b.link_type !== "inside") return -1;
     if (b.link_type === "inside" && a.link_type !== "inside") return 1;
     return (a.distance_m ?? Infinity) - (b.distance_m ?? Infinity);
   });
 
-  // Preparar “frases” (usamos hasta 2 en el párrafo principal)
   const pickPhrase = (link) => {
     const data = extractGroupData(link);
     const grupoNombre = link.layer_name || link.layer_id;
@@ -367,7 +510,6 @@ function generarResumenAreas(lat, lng, links) {
     };
   };
 
-  // Si no hay nada, mensaje simple
   if (!near.length && !far.length) {
     resumenEl.innerHTML = `
       <p class="muted" style="margin:0;font-size:0.9rem;">
@@ -377,7 +519,6 @@ function generarResumenAreas(lat, lng, links) {
     return;
   }
 
-  // Si hay dentro, eso manda
   const inside = near.find((l) => l.link_type === "inside");
   const first = near[0] || null;
   const second = near[1] || null;
@@ -389,7 +530,6 @@ function generarResumenAreas(lat, lng, links) {
     mainHTML += `
       <strong>Para este punto, lo más relevante es que ${p.text}.</strong>
     `;
-    // si además hay otro cercano distinto, lo mencionamos como antecedente
     const next = near.find((l) => l !== inside);
     if (next) {
       const p2 = pickPhrase(next);
@@ -406,7 +546,6 @@ function generarResumenAreas(lat, lng, links) {
       mainHTML += ` Como segundo antecedente, aparece ${p2.text}.`;
     }
   } else {
-    // no hay cerca, pero sí lejos
     mainHTML += `
       <span class="muted">
         No se detectaron áreas visualizables dentro de <strong>300 km</strong> del punto consultado.
@@ -474,7 +613,6 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
       map.setView([lat, lng], 12);
     }
 
-    // ✅ Foco visual: pulso + flecha cerca del área (centroide)
     try {
       addFocusMarker(map, feature);
     } catch (e) {}
@@ -534,30 +672,15 @@ function extractGroupData(link) {
   let ubicacion = null;
   let tipo = null;
 
+  // ✅ Superficie universal (para cualquier grupo)
+  const m2 = computeSurfaceM2(link.feature);
+  if (m2 != null) superficie = fmtArea(m2);
+
+  // Mantengo nombres/atributos por grupos conocidos (se pueden ampliar),
+  // pero la superficie ya NO depende del grupo.
   if (layerId.includes("snaspe")) {
     nombre = props.NOMBRE_TOT || props.NOMBRE_UNI || props.NOMBRE || props.nombre || "—";
     categoria = props.CATEGORIA || props.TIPO_DE_PR || props.categoria || null;
-
-    if (props.SUPERFICIE != null) {
-      const s = String(props.SUPERFICIE).toLowerCase();
-      if (s.includes("km") || s.includes("km2") || s.includes("km²")) {
-        superficie = s;
-      } else if (s.includes("ha")) {
-        superficie = s;
-      } else {
-        const num = parseFloat(s.replace(/[^\d.,]/g, "").replace(",", "."));
-        if (!isNaN(num)) {
-          superficie = num > 10000 ? fmtArea(num * 10000) : fmtArea(num);
-        }
-      }
-    }
-
-    if (!superficie && HAS_TURF && link.feature?.geometry) {
-      try {
-        const areaM2 = turf.area(link.feature);
-        superficie = fmtArea(areaM2);
-      } catch (e) {}
-    }
 
     if (props.REGION) {
       regiones = normalizarRegiones(props.REGION);
@@ -577,17 +700,19 @@ function extractGroupData(link) {
     ubicacion = [reg, prov, com].filter(Boolean).join(", ") || null;
 
     decreto = props.Decreto || props.decreto || null;
+  }
 
-    if (props.SUPERFICIE != null) {
-      const s = String(props.SUPERFICIE);
-      const n = parseFloat(String(props.SUPERFICIE).replace(",", "."));
-      superficie = s.includes("ha") || s.includes("km") ? s : (isFinite(n) ? fmtArea(n * 10000) : s);
-    } else if (HAS_TURF && link.feature?.geometry) {
-      try {
-        const areaM2 = turf.area(link.feature);
-        superficie = fmtArea(areaM2);
-      } catch (e) {}
-    }
+  // Fallback genérico de nombre si no calzó grupo
+  if (nombre === "—") {
+    nombre =
+      props.nombre ||
+      props.Nombre ||
+      props.NOMBRE ||
+      props.NOMBRE_TOT ||
+      props.NOMBRE_UNI ||
+      props.NOM ||
+      props.NAME ||
+      "—";
   }
 
   return {
@@ -743,7 +868,6 @@ function renderGroupCardLite(link, index) {
   const borderKm = distanceBorderM != null ? fmtKm(distanceBorderM) : null;
   const isInside = link.link_type === "inside";
 
-  // ✅ SIN MAPA: solo lado derecho (KPIs + tabla)
   let bodyHTML = `
     <div class="groupBody isHidden" id="${bodyId}">
       <div class="groupGrid" style="grid-template-columns: 1fr;">
@@ -935,7 +1059,6 @@ function loadAndRender() {
       const firstChevron = firstHead?.querySelector(".groupChevron");
 
       if (firstBody && firstHead) {
-        // Dejar abierto
         firstBody.classList.remove("isHidden");
         if (firstChevron) firstChevron.textContent = "▼";
         setTimeout(() => {
