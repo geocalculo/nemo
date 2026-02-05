@@ -11,6 +11,10 @@
 const REGIONES_URL = "data/regiones.json";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
 
+// ✅ Zoom de ingreso / región (lo que pediste)
+const ENTRY_ZOOM = 10;   // 17 o 18
+const REGION_ZOOM = 10;  // 17 o 18
+
 const OUT_STORAGE_KEY = "geonemo_out_v2";
 const MAP_PREF_KEY = "geonemo_map_pref";
 const GROUPS_URL = "capas/grupos.json";
@@ -32,7 +36,6 @@ function scheduleMapInvalidateSize() {
     try { map.invalidateSize(false); } catch (_) {}
   });
 }
-
 
 // ✅ Cache de archivos: fileUrl -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
 const fileState = new Map();
@@ -149,15 +152,12 @@ function initStatsbarAutoHeight() {
 
   let raf = 0;
   const apply = () => {
-    // Evita mediciones redundantes en cascada
     if (raf) cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
       raf = 0;
 
-      // Medir altura real del panel
       const h = Math.ceil(stats.getBoundingClientRect().height);
 
-      // Evitar writes innecesarios
       const prev = parseInt(getComputedStyle(root).getPropertyValue("--statsbar-h")) || 0;
       if (Math.abs(h - prev) <= 1) return;
 
@@ -165,41 +165,25 @@ function initStatsbarAutoHeight() {
 
       // ✅ CORRECCIÓN CRÍTICA: Cuando cambia altura del panel, Leaflet debe redimensionarse
       scheduleMapInvalidateSize();
-
-      // (Opcional) debug rápido
-      // console.log("[statsbar] --statsbar-h =", h);
     });
   };
 
-  // 1) Medición inicial
   apply();
 
-  // 2) Observa cambios de tamaño del panel (contenido/tabla/estilos)
   if ("ResizeObserver" in window) {
     const ro = new ResizeObserver(() => apply());
     ro.observe(stats);
 
-    // 3) Por seguridad, también al cambiar viewport
     window.addEventListener("resize", apply, { passive: true });
-
-    // 4) Exponer hook por si quieres forzar manualmente en algún caso raro
     window.__syncStatsbarHeight = apply;
 
     console.log("[statsbar] Auto-height activo (ResizeObserver).");
   } else {
-    // Fallback para navegadores muy viejos (no debería ser tu caso)
     console.warn("[statsbar] ResizeObserver no disponible, usando fallback por resize.");
     window.addEventListener("resize", apply, { passive: true });
     window.__syncStatsbarHeight = apply;
   }
 }
-
-// ✅ Ejecutar cuando el DOM esté listo
-document.addEventListener("DOMContentLoaded", () => {
-  initStatsbarAutoHeight();
-  initTopbarAutoHeight();
-});
-
 
 function initTopbarAutoHeight() {
   const root = document.documentElement;
@@ -215,8 +199,6 @@ function initTopbarAutoHeight() {
       const prev = parseInt(getComputedStyle(root).getPropertyValue("--topbar-h")) || 0;
       if (Math.abs(h - prev) <= 1) return;
       root.style.setProperty("--topbar-h", `${h}px`);
-      
-      // ✅ CORRECCIÓN CRÍTICA: Cuando cambia altura del topbar, Leaflet debe redimensionarse
       scheduleMapInvalidateSize();
     });
   };
@@ -234,6 +216,11 @@ function initTopbarAutoHeight() {
   }
 }
 
+// ✅ Ejecutar cuando el DOM esté listo
+document.addEventListener("DOMContentLoaded", () => {
+  initStatsbarAutoHeight();
+  initTopbarAutoHeight();
+});
 
 /* ===========================
    Map init
@@ -254,11 +241,12 @@ function crearMapa() {
     }
   );
 
+  // ✅ Subimos maxZoom para que no se “corte” si usas zoom 18
   satOverlay = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
       name: "Esri Satélite",
-      maxZoom: 17,
+      maxZoom: 19, // 👈 antes 17
       opacity: 0.25,
       attribution: "Tiles &copy; Esri",
       crossOrigin: true,
@@ -291,6 +279,34 @@ function crearMapa() {
 }
 
 /* ===========================
+   Auto-center GPS al cargar
+=========================== */
+function tryAutoCenterOnUser() {
+  if (!navigator.geolocation || !map) return;
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+
+      if (userMarker) map.removeLayer(userMarker);
+      userMarker = L.circleMarker([lat, lng], {
+        radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
+      }).addTo(map);
+
+      map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
+      toast("🎯 Centrado en tu ubicación", 1400);
+      setTimeout(() => map.invalidateSize(true), 150);
+      scheduleStatsUpdate();
+    },
+    () => {
+      // Si se niega o falla, nos quedamos en HOME_VIEW sin “ruido”
+    },
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+  );
+}
+
+/* ===========================
    Regiones
 =========================== */
 async function cargarRegiones() {
@@ -316,6 +332,7 @@ async function cargarRegiones() {
     opt.value = String(r.codigo_ine ?? r.id ?? r.nombre ?? "");
     opt.textContent = r.nombre ?? opt.value;
     opt.dataset.center = JSON.stringify(r.centro || r.center || null);
+    // mantenemos el zoom en dataset por compat, aunque lo ignoraremos
     opt.dataset.zoom = String(r.zoom ?? 7);
     sel.appendChild(opt);
   }
@@ -337,12 +354,10 @@ async function cargarRegiones() {
       if (lat != null && lng != null) center = [Number(lat), Number(lng)];
     }
 
-    const zoom = parseInt(opt.dataset.zoom || "7", 10);
-
     if (center && isFinite(center[0]) && isFinite(center[1])) {
-      map.setView(center, zoom, { animate: true });
+      // ✅ SIEMPRE mismo zoom al seleccionar región
+      map.setView(center, REGION_ZOOM, { animate: true });
       setTimeout(() => map.invalidateSize(true), 150);
-      // ✅ Trigger stats al cambiar región
       scheduleStatsUpdate();
     } else {
       console.warn("[GeoNEMO] Región sin centro válido:", opt.value, opt.dataset.center);
@@ -416,7 +431,6 @@ async function loadGroupsMaster(url){
    Load GeoJSON por ARCHIVO + index bbox/area
 =========================== */
 async function ensureFileLoaded(fileUrl){
-  // ✅ Cache: no recargamos si ya está en memoria
   const st = fileState.get(fileUrl) || { loaded:false, featuresIndex:[] };
   if (st.loaded) return st;
 
@@ -461,7 +475,6 @@ function renderGroupSummaryTable(rows){
 
   elGroupBody.innerHTML = "";
 
-  // ✅ Si no hay resultados, mostrar 0 (no "—")
   if (!rows || !rows.length){
     const tr = document.createElement("tr");
     const td = document.createElement("td");
@@ -470,13 +483,12 @@ function renderGroupSummaryTable(rows){
     td.textContent = "0 grupos con áreas en el BBOX visible";
     tr.appendChild(td);
     elGroupBody.appendChild(tr);
-    
+
     if (elGroupTotN) elGroupTotN.textContent = "0";
     if (elGroupTotA) elGroupTotA.textContent = "0 ha";
     return;
   }
 
-  // Ordenar por #areas desc
   rows.sort((a,b) => (b.count - a.count) || (b.areaM2 - a.areaM2) || String(a.group).localeCompare(String(b.group)));
 
   let sumN = 0;
@@ -503,7 +515,6 @@ function renderGroupSummaryTable(rows){
     elGroupBody.appendChild(tr);
   }
 
-  // ✅ Totales siempre muestran números (no "—")
   if (elGroupTotN) elGroupTotN.textContent = fmtInt(sumN);
   if (elGroupTotA) elGroupTotA.textContent = fmtArea(sumA);
 }
@@ -511,7 +522,6 @@ function renderGroupSummaryTable(rows){
 /* ===========================
    Stats BBOX -> por grupo
 =========================== */
-// ✅ Debounce usando requestAnimationFrame
 let _statsRAF = false;
 function scheduleStatsUpdate(){
   if (_statsRAF) return;
@@ -520,7 +530,6 @@ function scheduleStatsUpdate(){
     _statsRAF = false;
     updateBboxStatsByGroup().catch(err => {
       console.warn("[GeoNEMO] Error en updateBboxStatsByGroup:", err);
-      // ✅ En caso de error, mostrar 0 (no dejar vacío)
       renderGroupSummaryTable([]);
     });
   });
@@ -537,9 +546,7 @@ async function updateBboxStatsByGroup() {
     return;
   }
 
-  // ✅ Filtrar solo grupos activos (enabled !== false)
   const activeGroups = (GROUPS || []).filter((g) => g && g.enabled !== false);
-
   if (!activeGroups.length) {
     renderGroupSummaryTable([]);
     return;
@@ -554,7 +561,6 @@ async function updateBboxStatsByGroup() {
   let grandCount = 0;
   let grandAreaM2 = 0;
 
-  // ✅ Procesar cada grupo
   for (const g of activeGroups) {
     const files = Array.isArray(g.files) ? g.files : [];
     if (!files.length) continue;
@@ -567,7 +573,6 @@ async function updateBboxStatsByGroup() {
       try {
         st = await ensureFileLoaded(fileUrl);
       } catch (e) {
-        // ✅ Si falla un archivo, continuar con el resto
         console.warn("[GeoNEMO] error loading:", fileUrl, e);
         continue;
       }
@@ -576,10 +581,8 @@ async function updateBboxStatsByGroup() {
       if (!idx.length) continue;
 
       for (const it of idx) {
-        // ✅ Filtro rápido bbox-bbox primero
         if (!bboxIntersects(it.bbox, bbox)) continue;
 
-        // Confirmación geométrica
         let touches = false;
         try {
           touches = turf.booleanIntersects(it.feature, bboxPoly);
@@ -588,7 +591,6 @@ async function updateBboxStatsByGroup() {
 
         groupCount += 1;
 
-        // ✅ Área: intersección si se puede; fallback área del feature
         try {
           const inter = turf.intersect(it.feature, bboxPoly);
           if (inter) groupAreaM2 += turf.area(inter);
@@ -599,7 +601,6 @@ async function updateBboxStatsByGroup() {
       }
     }
 
-    // ✅ Solo agregar grupos con resultados > 0
     if (groupCount > 0) {
       summaryRows.push({
         group: g.group_name || g.group_id,
@@ -611,10 +612,8 @@ async function updateBboxStatsByGroup() {
     }
   }
 
-  // ✅ Renderizar tabla
   renderGroupSummaryTable(summaryRows);
 
-  // ✅ Persistencia para mapaout (mantengo compat con tu estructura)
   const prev = loadOut() || {};
   saveOut({
     ...prev,
@@ -796,7 +795,6 @@ async function onMapClick(e){
 
   const prev = loadOut() || {};
 
-  // mapaout consume payload.links -> layers
   const legacyLinks = results.map(r => ({
     layer_id: r.group_id,
     layer_name: r.group_name,
@@ -865,7 +863,9 @@ function bindUI() {
             radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
           }).addTo(map);
 
-          map.setView([lat, lng], Math.max(map.getZoom(), 14), { animate: true });
+          // ✅ Zoom fijo pedido
+          map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
+
           toast("🎯 Ubicación detectada", 1400);
           setTimeout(() => map.invalidateSize(true), 150);
           scheduleStatsUpdate();
@@ -904,6 +904,9 @@ function bindUI() {
   crearMapa();
   bindUI();
   await cargarRegiones();
+
+  // ✅ Intentar centrar en el usuario por defecto (sin apretar GPS)
+  tryAutoCenterOnUser();
 
   try {
     GROUPS = await loadGroupsMaster(GROUPS_URL);
