@@ -21,6 +21,8 @@
 const STORAGE_KEY = "geonemo_out_v2";
 const MAX_DISTANCE_FOR_DRAW = 300000; // 300 km - más allá no dibujamos geometría
 
+
+
 const HAS_TURF = typeof turf !== "undefined";
 
 let mainMap = null;
@@ -28,6 +30,11 @@ let pointMarker = null;
 let groupMaps = {}; // { groupId: leaflet map instance }
 let groupLayers = {}; // { groupId: leaflet layer }
 let mainMapBounds = null; // Guardar bounds originales para recentrar
+
+let mainLabelLayers = [];
+let mainPulseLayers = [];
+let labelsVisible = true;
+
 
 /* ===========================
    CSS runtime (pulso + flecha)
@@ -354,108 +361,163 @@ function applyMainMapMonochrome(mainMapInstance) {
   } catch (_) {}
 }
 
+function addPulsingPerimeter(map, feature, bufferMeters = 250) {
+  if (!map || !feature) return null;
+
+  let outline = feature;
+
+  // Buffer chico para que el perímetro se note (si hay Turf)
+  if (HAS_TURF && turf?.buffer) {
+    try {
+      outline = turf.buffer(feature, bufferMeters, { units: "meters" });
+    } catch (_) {
+      outline = feature;
+    }
+  }
+
+  const layer = L.geoJSON(outline, {
+    style: () => ({
+      className: "pulse-perimeter",
+      // dejamos valores base por si el browser no aplica CSS:
+      color: "#bef264",
+      weight: 5,
+      fillOpacity: 0,
+      opacity: 0.95
+    }),
+    interactive: false
+  }).addTo(map);
+
+  return layer;
+}
+
+function addGroupLabel(map, feature, text) {
+  if (!HAS_TURF || !feature || !text) return null;
+  try {
+    const c = turf.centroid(feature);
+    const [lng, lat] = c.geometry.coordinates;
+    const tip = L.tooltip({
+      permanent: true,
+      direction: "center",
+      className: "groupTag"
+    })
+      .setLatLng([lat, lng])
+      .setContent(text);
+    tip.addTo(map);
+    return tip;
+  } catch {
+    return null;
+  }
+}
+
+window.toggleMainLabels = function () {
+  labelsVisible = !labelsVisible;
+  mainLabelLayers.forEach(l =>
+    labelsVisible ? l.addTo(mainMap) : mainMap.removeLayer(l)
+  );
+};
+
+
 function initMainMap(lat, lng, links) {
-  mainMap = L.map("map", { zoomControl: true, preferCanvas: true }).setView([lat, lng], 12);
+  mainLabelLayers = [];
+  mainPulseLayers = [];
+
+  mainMap = L.map("map", { zoomControl: true, preferCanvas: true })
+    .setView([lat, lng], 12);
 
   L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
       maxZoom: 19,
       attribution: "Tiles &copy; Esri",
-      crossOrigin: true,
+      crossOrigin: true
     }
   ).addTo(mainMap);
 
-  // ✅ aplica filtro B/N SOLO en el mapa principal
   applyMainMapMonochrome(mainMap);
 
+  // Punto consultado
   pointMarker = L.circleMarker([lat, lng], {
     radius: 8,
     weight: 3,
     color: "#65a30d",
     fillColor: "#bef264",
-    fillOpacity: 0.8,
-    zIndexOffset: 1000,
+    fillOpacity: 0.85,
+    zIndexOffset: 1000
   }).addTo(mainMap);
 
-  pointMarker.bindTooltip("📍 Punto consultado", { permanent: false, direction: "top" });
+  pointMarker.bindTooltip("📍 Punto consultado", { direction: "top" });
 
+  // Bounds SIEMPRE parte con el punto
   const bounds = L.latLngBounds([lat, lng]);
-  let hasGeometries = false;
 
   links.forEach((link, idx) => {
-    const distanceM = link.distance_m;
-    const feature = link.feature;
+    const { feature, distance_m } = link;
+    if (!feature || !isFinite(distance_m) || distance_m > MAX_DISTANCE_FOR_DRAW) return;
 
-    if (!feature || distanceM == null || !isFinite(distanceM) || distanceM > MAX_DISTANCE_FOR_DRAW) return;
-
-    const data = extractGroupData(link);
-    const dictamen = getDictamen(link.link_type);
-
+    // Estilo por dictamen
     let color = "#22c55e";
-    let fillOpacity = 0.12;
+    let fillOpacity = 0.14;
+
     if (link.link_type === "inside") {
-      color = "#22c55e";
-      fillOpacity = 0.18;
+      fillOpacity = 0.22;
     } else if (link.link_type === "nearest_perimeter") {
       color = "#f59e0b";
-      fillOpacity = 0.12;
     }
 
-    const layer = L.geoJSON(feature, {
+    // Polígono base
+    const poly = L.geoJSON(feature, {
       style: {
-        color: color,
+        color,
         weight: 2,
         fillColor: color,
-        fillOpacity: fillOpacity,
-      },
+        fillOpacity
+      }
     }).addTo(mainMap);
 
-    try {
-      bounds.extend(layer.getBounds());
-      hasGeometries = true;
-    } catch (e) {}
+    bounds.extend(poly.getBounds());
 
-    const distKm = fmtKm(distanceM);
-    const tooltipContent = `
+    // 🔥 Perímetro pulsante (TODOS)
+    const pulse = addPulsingPerimeter(mainMap, feature, 250);
+    if (pulse) {
+      mainPulseLayers.push(pulse);
+      bounds.extend(pulse.getBounds());
+    }
+
+    // 🏷️ Etiqueta por grupo (SNASPE, RAMSAR, etc.)
+    const labelText = link.layer_id;
+    const tag = addGroupLabel(mainMap, feature, labelText);
+    if (tag) mainLabelLayers.push(tag);
+
+    // Popup
+    const data = extractGroupData(link);
+    const dictamen = getDictamen(link.link_type);
+    const distKm = fmtKm(distance_m);
+
+    poly.bindPopup(`
       <div style="min-width:180px;">
-        <div style="font-weight:600;margin-bottom:4px;">${link.layer_name || link.layer_id}</div>
-        <div style="font-size:0.9em;opacity:0.85;margin-bottom:4px;">${data.nombre}</div>
-        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
-          <span class="badgeMini ${dictamen.class}" style="font-size:0.75em;padding:2px 6px;">${dictamen.text}</span>
-          <span style="font-size:0.85em;">${link.link_type === "inside" ? "0 km" : distKm}</span>
+        <div style="font-weight:600;">${labelText}</div>
+        <div style="opacity:.85;margin:4px 0;">${data.nombre}</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <span class="badgeMini ${dictamen.class}">${dictamen.text}</span>
+          <span>${link.link_type === "inside" ? "0 km" : distKm}</span>
         </div>
         <button
           onclick="scrollToGroup(${idx})"
           class="btnSm btn--primary"
-          style="width:100%;font-size:0.8em;padding:4px 8px;"
-        >
-          ↓ Ver detalle
-        </button>
+          style="width:100%;margin-top:6px;"
+        >↓ Ver detalle</button>
       </div>
-    `;
-
-    layer.bindPopup(tooltipContent, { maxWidth: 250 });
-    layer.on("click", () => {
-      layer.openPopup();
-    });
+    `);
   });
 
-  if (hasGeometries) {
-    try {
-      mainMap.fitBounds(bounds, { padding: [40, 40] });
-      mainMapBounds = bounds;
-    } catch (e) {
-      mainMap.setView([lat, lng], 12);
-      mainMapBounds = null;
-    }
-  } else {
-    mainMap.setView([lat, lng], 12);
-    mainMapBounds = null;
-  }
+  // ✅ Fit final: TODO (POI + áreas + pulsos)
+  mainMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
+  mainMapBounds = bounds;
 
   setTimeout(() => mainMap.invalidateSize(true), 100);
 }
+
+
 
 /* ===========================
    Generar resumen humano (B) + menciona >300 km
