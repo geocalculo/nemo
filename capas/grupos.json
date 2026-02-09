@@ -18,7 +18,9 @@
       "enabled": true,
       "files": [
         "capas_snaspe/SNASPE_Parque_Nacional.geojson",
+        "capas_snaspe/SNASPE_Parque_Nacional_AUSTRAL.geojson",
         "capas_snaspe/SNASPE_Reserva_Nacional.geojson",
+        "capas_snaspe/SNASPE_Reserva_Nacional_AUSTRAL.geojson",
         "capas_snaspe/SNASPE_Monumento_Natural.geojson"
       ]
     }

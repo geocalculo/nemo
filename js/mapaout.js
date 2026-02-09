@@ -25,6 +25,54 @@ const MAX_DISTANCE_FOR_DRAW = 300000; // 300 km - más allá no dibujamos geomet
 
 const HAS_TURF = typeof turf !== "undefined";
 
+function addBasemapSatelliteWithLabels(map, { grayscale = false } = {}) {
+  // panes (aisla filtro BN solo al satélite)
+  if (!map.getPane("paneSat")) {
+    map.createPane("paneSat");
+    map.getPane("paneSat").style.zIndex = 200;
+  }
+  if (!map.getPane("paneLabels")) {
+    map.createPane("paneLabels");
+    map.getPane("paneLabels").style.zIndex = 350;
+    map.getPane("paneLabels").style.pointerEvents = "none";
+  }
+
+  // satélite
+  L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    {
+      pane: "paneSat",
+      maxZoom: 19,
+      attribution: "Tiles &copy; Esri",
+      crossOrigin: true
+    }
+  ).addTo(map);
+
+  // filtro solo si se pide (mainMap)
+  if (grayscale) {
+    map.getPane("paneSat").style.filter =
+      "grayscale(100%) brightness(1.05) contrast(1.1)";
+  } else {
+    map.getPane("paneSat").style.filter = "";
+  }
+
+  // labels
+  L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png",
+    {
+      pane: "paneLabels",
+      subdomains: "abcd",
+      maxZoom: 20,
+      attribution: "© OpenStreetMap © CARTO",
+      crossOrigin: true
+    }
+  ).addTo(map);
+}
+
+
+
+
+
 let mainMap = null;
 let pointMarker = null;
 let groupMaps = {}; // { groupId: leaflet map instance }
@@ -424,16 +472,40 @@ function initMainMap(lat, lng, links) {
   mainMap = L.map("map", { zoomControl: true, preferCanvas: true })
     .setView([lat, lng], 12);
 
+  // Panes para controlar BN SOLO en el satélite (sin afectar labels)
+  mainMap.createPane("paneSat");
+  mainMap.getPane("paneSat").style.zIndex = 200;
+
+  mainMap.createPane("paneLabels");
+  mainMap.getPane("paneLabels").style.zIndex = 350;
+  mainMap.getPane("paneLabels").style.pointerEvents = "none";
+
+  // Satélite (Esri) en paneSat
   L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
+      pane: "paneSat",
       maxZoom: 19,
       attribution: "Tiles &copy; Esri",
       crossOrigin: true
     }
   ).addTo(mainMap);
 
-  applyMainMapMonochrome(mainMap);
+  // Monocromo SOLO al satélite del mapa resumen
+  mainMap.getPane("paneSat").style.filter =
+    "grayscale(100%) brightness(1.05) contrast(1.1)";
+
+  // Labels livianos (Carto) en paneLabels
+  L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png",
+    {
+      pane: "paneLabels",
+      subdomains: "abcd",
+      maxZoom: 20,
+      attribution: "© OpenStreetMap © CARTO",
+      crossOrigin: true
+    }
+  ).addTo(mainMap);
 
   // Punto consultado
   pointMarker = L.circleMarker([lat, lng], {
@@ -447,14 +519,14 @@ function initMainMap(lat, lng, links) {
 
   pointMarker.bindTooltip("📍 Punto consultado", { direction: "top" });
 
-  // Bounds SIEMPRE parte con el punto
-  const bounds = L.latLngBounds([lat, lng]);
+  // ✅ Bounds master (robusto): parte vacío y FORZAMOS incluir POI
+  const bounds = L.latLngBounds([]);
+  bounds.extend([lat, lng]);
 
   links.forEach((link, idx) => {
     const { feature, distance_m } = link;
     if (!feature || !isFinite(distance_m) || distance_m > MAX_DISTANCE_FOR_DRAW) return;
 
-    // Estilo por dictamen
     let color = "#22c55e";
     let fillOpacity = 0.14;
 
@@ -464,31 +536,22 @@ function initMainMap(lat, lng, links) {
       color = "#f59e0b";
     }
 
-    // Polígono base
     const poly = L.geoJSON(feature, {
-      style: {
-        color,
-        weight: 2,
-        fillColor: color,
-        fillOpacity
-      }
+      style: { color, weight: 2, fillColor: color, fillOpacity }
     }).addTo(mainMap);
 
-    bounds.extend(poly.getBounds());
+    try { bounds.extend(poly.getBounds()); } catch (e) {}
 
-    // 🔥 Perímetro pulsante (TODOS)
     const pulse = addPulsingPerimeter(mainMap, feature, 250);
     if (pulse) {
       mainPulseLayers.push(pulse);
-      bounds.extend(pulse.getBounds());
+      try { bounds.extend(pulse.getBounds()); } catch (e) {}
     }
 
-    // 🏷️ Etiqueta por grupo (SNASPE, RAMSAR, etc.)
     const labelText = link.layer_id;
     const tag = addGroupLabel(mainMap, feature, labelText);
     if (tag) mainLabelLayers.push(tag);
 
-    // Popup
     const data = extractGroupData(link);
     const dictamen = getDictamen(link.link_type);
     const distKm = fmtKm(distance_m);
@@ -510,12 +573,15 @@ function initMainMap(lat, lng, links) {
     `);
   });
 
-  // ✅ Fit final: TODO (POI + áreas + pulsos)
-  mainMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
-  mainMapBounds = bounds;
+  // ✅ Fit final + guardar bounds como COPIA (para que recenter incluya POI)
+  const finalBounds = L.latLngBounds(bounds.getSouthWest(), bounds.getNorthEast());
+  mainMap.fitBounds(finalBounds, { padding: [40, 40], maxZoom: 13 });
+  mainMapBounds = finalBounds;
 
   setTimeout(() => mainMap.invalidateSize(true), 100);
 }
+
+
 
 
 
@@ -635,16 +701,11 @@ function generarResumenAreas(lat, lng, links) {
 function initGroupMap(containerId, lat, lng, feature, distanceM) {
   if (groupMaps[containerId]) return;
 
-  const map = L.map(containerId, { zoomControl: false, preferCanvas: true }).setView([lat, lng], 12);
+  const map = L.map(containerId, { zoomControl: false, preferCanvas: true })
+    .setView([lat, lng], 12);
 
-  L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    {
-      maxZoom: 19,
-      attribution: "Tiles &copy; Esri",
-      crossOrigin: true,
-    }
-  ).addTo(map);
+  // ✅ Base estándar opción 3 (detalle EN COLOR)
+  addBasemapSatelliteWithLabels(map, { grayscale: false });
 
   const pointMarker = L.circleMarker([lat, lng], {
     radius: 6,
@@ -655,6 +716,7 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
   }).addTo(map);
 
   let layer = null;
+
   if (feature && distanceM != null && distanceM <= MAX_DISTANCE_FOR_DRAW) {
     layer = L.geoJSON(feature, {
       style: {
@@ -684,6 +746,7 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
 
   groupMaps[containerId] = map;
 
+  // ✅ toggle Punto + área vs Solo área (igual que lo tienes)
   if (layer) {
     const toggleBtnId = `toggle-${containerId}`;
     const toggleBtn = document.getElementById(toggleBtnId);
@@ -717,6 +780,7 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
 
   setTimeout(() => map.invalidateSize(true), 100);
 }
+
 
 /* ===========================
    Extracción de datos por grupo
