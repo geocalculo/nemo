@@ -1223,20 +1223,192 @@ function loadAndRender() {
 }
 
 /* ===========================
+   KML EXPORT (Mapa principal)
+   - Punto consultado
+   - Polígonos dibujados (<=300 km)
+=========================== */
+
+function kmlEscape(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function ensureRingClosed(ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return ring;
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (!first || !last) return ring;
+  const same = first[0] === last[0] && first[1] === last[1];
+  return same ? ring : ring.concat([first]);
+}
+
+function ringToKmlCoords(ring) {
+  const closed = ensureRingClosed(ring || []);
+  return closed.map((c) => `${c[0]},${c[1]},0`).join(" ");
+}
+
+function polygonToKml(polyCoords) {
+  // polyCoords: [ outerRing, hole1, hole2, ... ]
+  const outer = polyCoords?.[0] || [];
+  const holes = (polyCoords || []).slice(1);
+
+  let k = `<Polygon><outerBoundaryIs><LinearRing><coordinates>${ringToKmlCoords(
+    outer
+  )}</coordinates></LinearRing></outerBoundaryIs>`;
+
+  for (const h of holes) {
+    k += `<innerBoundaryIs><LinearRing><coordinates>${ringToKmlCoords(
+      h
+    )}</coordinates></LinearRing></innerBoundaryIs>`;
+  }
+
+  k += `</Polygon>`;
+  return k;
+}
+
+function geometryToKml(geom) {
+  if (!geom || !geom.type) return "";
+  const t = geom.type;
+
+  if (t === "Point") {
+    const [lng, lat] = geom.coordinates;
+    return `<Point><coordinates>${lng},${lat},0</coordinates></Point>`;
+  }
+
+  if (t === "Polygon") {
+    return polygonToKml(geom.coordinates);
+  }
+
+  if (t === "MultiPolygon") {
+    const polys = geom.coordinates || [];
+    return `<MultiGeometry>${polys.map(polygonToKml).join("")}</MultiGeometry>`;
+  }
+
+  return "";
+}
+
+function placemarkKml({ name, description, geomKml, styleUrl }) {
+  if (!geomKml) return "";
+  return `
+  <Placemark>
+    <name>${kmlEscape(name)}</name>
+    ${description ? `<description>${kmlEscape(description)}</description>` : ""}
+    ${styleUrl ? `<styleUrl>${styleUrl}</styleUrl>` : ""}
+    ${geomKml}
+  </Placemark>`;
+}
+
+function buildKmlDocument(placemarks, docName) {
+  const styles = `
+  <Style id="polyStyle">
+    <LineStyle><color>ff00ff00</color><width>3</width></LineStyle>
+    <PolyStyle><color>4d00ff00</color></PolyStyle>
+  </Style>
+  <Style id="ptStyle">
+    <IconStyle>
+      <scale>1.1</scale>
+      <Icon><href>http://maps.google.com/mapfiles/kml/paddle/red-circle.png</href></Icon>
+    </IconStyle>
+  </Style>`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+  <name>${kmlEscape(docName || "GeoNEMO export")}</name>
+  ${styles}
+  ${placemarks.join("\n")}
+</Document>
+</kml>`;
+}
+
+function downloadTextFile(text, filename, mime = "application/vnd.google-earth.kml+xml") {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function buildMainMapKmlFromStorage() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+
+  const data = JSON.parse(raw);
+  const click = data.click || {};
+  const links = data.links || [];
+
+  if (!isFinite(click.lat) || !isFinite(click.lng)) return null;
+
+  // Solo lo que aparece en el MAPA PRINCIPAL (tu misma regla)
+  const visibleLinks = links.filter(isVisualizable);
+
+  const placemarks = [];
+
+  // 1) Punto consultado
+  placemarks.push(
+    placemarkKml({
+      name: "Punto consultado",
+      description: `Coordenadas: ${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}`,
+      geomKml: geometryToKml({
+        type: "Point",
+        coordinates: [click.lng, click.lat],
+      }),
+      styleUrl: "#ptStyle",
+    })
+  );
+
+  // 2) Polígonos por grupo (los que dibujas)
+  visibleLinks.forEach((link) => {
+    const feat = link.feature;
+    if (!feat?.geometry) return;
+
+    const dataG = extractGroupData(link);
+    const grupo = link.layer_name || link.layer_id || "Grupo";
+    const nombreArea = dataG?.nombre && dataG.nombre !== "—" ? dataG.nombre : "Área";
+    const distTxt =
+      link.link_type === "inside"
+        ? "Dentro del área"
+        : (isFinite(link.distance_m) ? `Distancia mínima: ${(link.distance_m / 1000).toFixed(2)} km` : "");
+
+    placemarks.push(
+      placemarkKml({
+        name: `${grupo} — ${nombreArea}`,
+        description: distTxt,
+        geomKml: geometryToKml(feat.geometry),
+        styleUrl: "#polyStyle",
+      })
+    );
+  });
+
+  const kml = buildKmlDocument(
+    placemarks,
+    `GeoNEMO - Mapa principal (${new Date().toISOString().slice(0, 10)})`
+  );
+
+  return kml;
+}
+
+/* ===========================
    Botones de acción
 =========================== */
 function bindUI() {
   const btnBack = document.getElementById("btnBack");
   if (btnBack) {
     btnBack.addEventListener("click", () => {
-      if (window.opener) {
-        window.close();
-      } else {
-        window.history.back();
-      }
+      if (window.opener) window.close();
+      else window.history.back();
     });
   }
 
+  // Dropdown Descargas
   const btnDownloads = document.getElementById("btnDownloads");
   const downloadsMenu = document.getElementById("downloadsMenu");
   if (btnDownloads && downloadsMenu) {
@@ -1250,6 +1422,7 @@ function bindUI() {
     });
   }
 
+  // Descargar JSON (resultado completo)
   const btnDownloadJSON = document.getElementById("btnDownloadJSON");
   if (btnDownloadJSON) {
     btnDownloadJSON.addEventListener("click", () => {
@@ -1276,17 +1449,47 @@ function bindUI() {
     });
   }
 
+  // Descargar KML (mapa principal: punto + polígonos dibujados <=300km)
+  const btnDownloadKML = document.getElementById("btnDownloadKML");
+  if (btnDownloadKML) {
+    btnDownloadKML.addEventListener("click", () => {
+      try {
+        const kml = buildMainMapKmlFromStorage();
+        if (!kml) {
+          toast("⚠️ No hay datos válidos para KML", 2000);
+          return;
+        }
+
+        downloadTextFile(
+          kml,
+          `geonemo-mapa-principal-${new Date().toISOString().slice(0, 10)}.kml`
+        );
+
+        toast("✅ KML descargado", 1500);
+      } catch (e) {
+        console.error(e);
+        toast("⚠️ Error al generar KML", 2000);
+      }
+    });
+  }
+
+  // (placeholder) GeoJSON polígono seleccionado
+  // OJO: tu HTML lo tiene disabled. Si luego lo habilitas, aquí conectas su lógica.
+  const btnDownloadSelectedGeoJSON = document.getElementById("btnDownloadSelectedGeoJSON");
+  if (btnDownloadSelectedGeoJSON) {
+    btnDownloadSelectedGeoJSON.addEventListener("click", () => {
+      toast("ℹ️ Aún no implementado: GeoJSON (polígono seleccionado)", 1800);
+    });
+  }
+
+  // Copiar link
   const btnCopyLink = document.getElementById("btnCopyLink");
   if (btnCopyLink) {
     btnCopyLink.addEventListener("click", () => {
       navigator.clipboard
         .writeText(window.location.href)
-        .then(() => {
-          toast("✅ Link copiado", 1500);
-        })
-        .catch(() => {
-          toast("⚠️ No se pudo copiar el link", 2000);
-        });
+        .then(() => toast("✅ Link copiado", 1500))
+        .catch(() => toast("⚠️ No se pudo copiar el link", 2000));
     });
   }
 }
