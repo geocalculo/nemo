@@ -253,3 +253,20 @@ select option{ color: var(--text); background-color: #ffffff; }
   opacity:.6;
   text-align:center;
 }
+
+.map-hint {
+  position: fixed;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  opacity: 0;
+  transform: translate(0, -50%);
+  transition: opacity 0.2s ease;
+  white-space: nowrap;
+}

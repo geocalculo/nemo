@@ -229,6 +229,8 @@ function crearMapa() {
   map = L.map("map", { zoomControl: true, preferCanvas: true })
     .setView(HOME_VIEW.center, HOME_VIEW.zoom);
 
+  initMapCursorHint(map);  
+
   topoBase = L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     {
@@ -897,6 +899,45 @@ function bindUI() {
   }
 }
 
+
+function initMapCursorHint(mapInstance) {
+  const hint = document.getElementById("map-hint-cursor");
+  if (!hint || !mapInstance) return;
+
+  const isTouch = window.matchMedia("(pointer: coarse)").matches;
+  if (isTouch) return; // solo desktop
+
+  const OFFSET_X = 18;   // a la derecha del puntero
+  const OFFSET_Y = -14;  // levemente arriba
+
+  function moveHint(x, y) {
+    hint.style.left = `${x + OFFSET_X}px`;
+    hint.style.top = `${y + OFFSET_Y}px`;
+  }
+
+  function showHint() {
+    hint.style.opacity = "1";
+  }
+
+  const mapEl = mapInstance.getContainer();
+  if (!mapEl) return;
+
+  mapEl.addEventListener("mouseenter", (e) => {
+    moveHint(e.clientX, e.clientY);
+    showHint();
+  });
+
+  mapEl.addEventListener("mousemove", (e) => {
+    moveHint(e.clientX, e.clientY);
+    showHint();
+  });
+
+  mapEl.addEventListener("mouseleave", () => {
+    hint.style.opacity = "1";
+  });
+}
+
+
 /* ===========================
    Init
 =========================== */
@@ -927,3 +968,5 @@ function bindUI() {
   scheduleStatsUpdate();
   toast("Listo ✅ Mueve/zoom para ver resumen por grupo. Click para abrir MapaOut.", 2200);
 })();
+
+
