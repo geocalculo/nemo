@@ -270,3 +270,42 @@ select option{ color: var(--text); background-color: #ffffff; }
   transition: opacity 0.2s ease;
   white-space: nowrap;
 }
+
+#ecosystem-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 56px;
+  background: #020617;
+  border-top: 1px solid #111827;
+  display: flex;
+  z-index: 9999;
+}
+
+/* Botones */
+#ecosystem-bar a {
+  flex: 1;
+  text-align: center;
+  line-height: 56px;
+  color: #19f0c2;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Hover (desktop fallback) */
+#ecosystem-bar a:hover {
+  background: #111827;
+}
+
+/* SOLO MOBILE */
+@media (min-width: 768px) {
+  #ecosystem-bar {
+    display: none;
+  }
+}
+
+.leaflet-bottom {
+  bottom: 60px !important;
+}
