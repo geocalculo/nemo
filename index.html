@@ -3,100 +3,31 @@
 <head>
   <meta charset="utf-8" />
 
-<!-- Google Tag Manager -->
+  <!-- Google Tag Manager -->
   <script>
-  (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-  'https://www.googletagmanager.com/gtm.js?id='+i+dl;
-  f.parentNode.insertBefore(j,f);
-  })(window,document,'script','dataLayer','GTM-PDTL4LG2');
+    (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+    new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+    j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+    'https://www.googletagmanager.com/gtm.js?id='+i+dl;
+    f.parentNode.insertBefore(j,f);
+    })(window,document,'script','dataLayer','GTM-PDTL4LG2');
   </script>
-<!-- End Google Tag Manager --> 
-
-
-
+  <!-- End Google Tag Manager -->
 
   <!-- Cloudflare Web Analytics -->
-   <script defer src='https://static.cloudflareinsights.com/beacon.min.js' 
-   data-cf-beacon='{"token": "af680a7f5f124793802b740c74ae6fea"}'>
-  </script>
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon='{"token": "af680a7f5f124793802b740c74ae6fea"}'></script>
   <!-- End Cloudflare Web Analytics -->
-  
+
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GeoNEMO - SNASPE</title>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="css/index.css" />
 
-  <style>
-    .statsbar {
-      display: block;
-      padding: 0.5rem 1rem;
-    }
 
-    .statsbar h2 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1rem;
-      font-weight: 600;
-      color: #333;
-    }
 
-    .group-summary-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.85rem;
-    }
 
-    .group-summary-table thead {
-      background: #f5f5f5;
-      border-bottom: 2px solid #ddd;
-    }
-
-    .group-summary-table th {
-      padding: 0.4rem 0.6rem;
-      text-align: left;
-      font-weight: 600;
-      color: #555;
-    }
-
-    .group-summary-table th:nth-child(2),
-    .group-summary-table th:nth-child(3),
-    .group-summary-table td:nth-child(2),
-    .group-summary-table td:nth-child(3) {
-      text-align: right;
-    }
-
-    .group-summary-table tbody tr {
-      border-bottom: 1px solid #eee;
-    }
-
-    .group-summary-table tbody tr:hover {
-      background: #f9f9f9;
-    }
-
-    .group-summary-table td {
-      padding: 0.35rem 0.6rem;
-      color: #333;
-    }
-
-    .group-summary-table td.muted {
-      color: #999;
-      font-style: italic;
-      text-align: center;
-    }
-
-    .group-summary-table tfoot {
-      background: #f0f8ff;
-      border-top: 2px solid #3498db;
-      font-weight: 600;
-    }
-
-    .group-summary-table tfoot td {
-      padding: 0.5rem 0.6rem;
-      color: #2c3e50;
-    }
-  </style>
 </head>
 <body>
 
@@ -107,19 +38,41 @@
   </noscript>
   <!-- End Google Tag Manager (noscript) -->
 
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">🌿</div>
-      <div class="title">
-        <h1>GeoNEMO</h1>
-        <span>Consulta por punto · Vinculación por dentro o proximidad · Salida MapaOut</span>
-      </div>
-    </div>
+  <!-- BANNERS LATERALES (solo desktop) -->
+  <div class="banner-left" aria-hidden="true">
+    <iframe src="banners/banner_01_geoipt.html" loading="lazy" scrolling="no"></iframe>
+  </div>
 
-    <div class="controls">
-      <select id="selRegion">
-        <option value="">Selecciona región…</option>
-      </select>
+  <div class="banner-right" aria-hidden="true">
+    <iframe src="banners/banner_geoeva_01.html" loading="lazy" scrolling="no"></iframe>
+  </div>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-inline">
+        <div class="logo-box">🌿</div>
+
+        <div class="brand-text">
+          <span class="brand-name">GeoNEMO</span>
+          <span class="brand-tagline">Consulta por punto · Vinculación por dentro o proximidad · Salida MapaOut</span>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="topbar-kpi">
+          <span>📊 Total:</span>
+          <strong id="groupSummaryTotalN_top">—</strong>
+          <span>sitios</span>
+          <span>·</span>
+          <strong id="groupSummaryTotalArea_top">—</strong>
+        </div>
+
+        <div class="controls-inline">
+          <select id="selRegion">
+            <option value="">Selecciona región…</option>
+          </select>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -127,16 +80,9 @@
     Haz clic en el mapa para explorar áreas protegidas
   </div>
 
-  <div class="statsbar" aria-live="polite">
-    <h2>📊 Resumen por grupo (BBOX visible)</h2>
-    <table class="group-summary-table">
-      <thead>
-        <tr>
-          <th>Grupo</th>
-          <th>Sitios</th>
-          <th>Superficie</th>
-        </tr>
-      </thead>
+  <!-- Resumen por grupo oculto, pero conservando IDs para la barra superior -->
+  <div style="display:none;" aria-hidden="true">
+    <table>
       <tbody id="groupSummaryBody">
         <tr><td colspan="3" class="muted">—</td></tr>
       </tbody>
@@ -162,34 +108,58 @@
 
   <script src="js/index.js"></script>
 
-  <!-- Contador de visitas -->
-<div id="visitor-counter" style="
-  position:fixed;
-  bottom:10px;
-  right:12px;
-  font-size:12px;
-  font-family:Inter, Arial, sans-serif;
-  color:#9ca3af;
-  background:rgba(0,0,0,0.6);
-  padding:6px 10px;
-  border-radius:8px;
-  backdrop-filter: blur(6px);
-  z-index:9999;
-">
-  Visitas: 
-  <img src="https://api.visitorbadge.io/api/visitors?path=geonemo.cl&countColor=%2322c55e"
-       alt="contador visitas"
-       style="vertical-align:middle;">
-</div>
+  <script>
+    /* Espeja los totales del resumen en la barra superior */
+    (function () {
+      const totalN = document.getElementById('groupSummaryTotalN');
+      const totalArea = document.getElementById('groupSummaryTotalArea');
+      const totalNTop = document.getElementById('groupSummaryTotalN_top');
+      const totalAreaTop = document.getElementById('groupSummaryTotalArea_top');
 
-<div id="ecosystem-bar">
-  <a href="https://geoipt.cl?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema">
-    GeoIPT.cl
-  </a>
-  <a href="https://geoeva.cl?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema">
-    GeoEVA.cl
-  </a>
-</div>
+      if (!totalN || !totalArea || !totalNTop || !totalAreaTop) return;
+
+      const syncTotals = () => {
+        totalNTop.textContent = totalN.textContent || '—';
+        totalAreaTop.textContent = totalArea.textContent || '—';
+      };
+
+      syncTotals();
+
+      const observer = new MutationObserver(syncTotals);
+      observer.observe(totalN, { childList: true, subtree: true, characterData: true });
+      observer.observe(totalArea, { childList: true, subtree: true, characterData: true });
+    })();
+  </script>
+
+  <!-- Contador de visitas -->
+  <div id="visitor-counter" style="
+    position:fixed;
+    bottom:10px;
+    right:12px;
+    font-size:12px;
+    font-family:Inter, Arial, sans-serif;
+    color:#9ca3af;
+    background:rgba(0,0,0,0.6);
+    padding:6px 10px;
+    border-radius:8px;
+    backdrop-filter: blur(6px);
+    z-index:9999;
+  ">
+    Visitas:
+    <img
+      src="https://api.visitorbadge.io/api/visitors?path=geonemo.cl&countColor=%2322c55e"
+      alt="contador visitas"
+      style="vertical-align:middle;">
+  </div>
+
+  <div id="ecosystem-bar">
+    <a href="https://geoipt.cl?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema">
+      GeoIPT.cl
+    </a>
+    <a href="https://geoeva.cl?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema">
+      GeoEVA.cl
+    </a>
+  </div>
 
 </body>
 </html>

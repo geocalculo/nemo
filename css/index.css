@@ -10,17 +10,21 @@
   --primary2:#22c55e;
   --accent:#bef264;
 
-  /* ✅ Layout heights (actualizadas dinámicamente por JS) */
+  /* Alturas base */
   --topbar-h: 64px;
-  --statsbar-h: 120px; /* ✅ valor inicial más grande para tabla */
+  --statsbar-h: 0px;
+  --mobile-bar-h: 56px;
 }
 
-*{ box-sizing:border-box; }
+*{
+  box-sizing:border-box;
+}
 
-html, body{
+html,
+body{
   height:100%;
   margin:0;
-  font-family: Inter, system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif;
   color:var(--text);
   background:
     radial-gradient(1200px 700px at 18% 8%, rgba(190, 242, 100, 0.18) 0%, rgba(0,0,0,0) 55%),
@@ -28,38 +32,70 @@ html, body{
     linear-gradient(180deg, var(--bg), #f1f7ea);
 }
 
-/* ===== Topbar fija ===== */
+/* =========================
+   TOPBAR
+========================= */
+
 .topbar{
   position:fixed;
-  top:0; left:0; right:0;
-  /* ✅ NO fijar height - se mide dinámicamente */
+  top:0;
+  left:0;
+  right:0;
   display:flex;
   align-items:center;
   justify-content:space-between;
-  padding:10px 12px;
-  background: rgba(255,255,255,0.75);
+  padding:8px 14px;
+  background: rgba(255,255,255,0.82);
   border-bottom:1px solid var(--stroke);
   z-index:1000;
   backdrop-filter: blur(10px);
 }
 
-.brand{ display:flex; gap:10px; align-items:center; min-width:0; }
+.topbar-inner{
+  width:100%;
+  max-width:none;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:nowrap;
+}
+
+.brand{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  min-width:0;
+  flex:1 1 auto;
+}
 
 .logo{
-  width:40px; height:40px;
-  display:grid; place-items:center;
+  width:36px;
+  height:36px;
+  display:grid;
+  place-items:center;
   border:1px solid var(--stroke);
   border-radius:12px;
   box-shadow:var(--shadow);
-  background: rgba(255,255,255,0.62);
-  font-size:18px;
+  background: rgba(255,255,255,0.70);
+  font-size:17px;
+  flex:0 0 auto;
 }
 
-.title h1{ margin:0; font-size:16px; line-height:1.1; font-weight:600; }
+.title{
+  min-width:0;
+}
+
+.title h1{
+  margin:0;
+  font-size:15px;
+  line-height:1.1;
+  font-weight:700;
+}
 
 .title span{
   display:block;
-  font-size:12px;
+  font-size:11px;
   color:rgba(11,15,13,0.45);
   margin-top:2px;
   white-space:nowrap;
@@ -67,58 +103,76 @@ html, body{
   text-overflow:ellipsis;
 }
 
-.controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.controls{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:nowrap;
+  position:relative;
+  z-index:1100;
+}
 
 select{
-  height:40px;
-  padding:0 10px;
+  height:38px;
+  padding:0 12px;
   border-radius:12px;
   border:1px solid var(--stroke);
-  background: rgba(255,255,255,0.62);
+  background: rgba(255,255,255,0.78);
   color: var(--text);
   outline:none;
   min-width:240px;
+  font-size:14px;
+  position:relative;
+  z-index:1100;
+}
+
+select option{
+  color: var(--text);
+  background:#ffffff;
 }
 
 .btn{
-  height:40px;
+  height:38px;
   padding:0 12px;
   border-radius:999px;
   border:1px solid var(--stroke);
-  background: rgba(255,255,255,0.55);
+  background: rgba(255,255,255,0.60);
   color: var(--text);
   cursor:pointer;
   font-weight:600;
 }
 
 .btn:hover{
-  background: rgba(255,255,255,0.72);
+  background: rgba(255,255,255,0.78);
   border-color: rgba(30,41,18,0.18);
 }
 
-/* ===== Barra resumen dinámica (BBOX) =====
-   ✅ NO fijamos height: debe crecer/achicarse según contenido.
-   ✅ El layout del mapa usa --statsbar-h (set por JS).
-*/
+/* =========================
+   STATSBAR
+========================= */
+
 .statsbar{
-  position:fixed;
-  top:var(--topbar-h);
-  left:0; right:0;
-
-  /* ✅ dinámica - NO fijar height */
-  height:auto;
-
-  /* ✅ CAMBIO: ahora es block para soportar tabla (no flex) */
-  display:block;
-  padding:8px 12px;
-
-  background: rgba(255,255,255,0.68);
-  border-bottom:1px solid var(--stroke);
-  z-index:900;
+  position: fixed;
+  top: var(--topbar-h);
+  left: 0;
+  right: 0;
+  height: auto;
+  display: none !important;
+  padding: 6px 14px 7px;
+  background: rgba(255,255,255,0.76);
+  border-bottom: 1px solid var(--stroke);
+  z-index: 900;
   backdrop-filter: blur(10px);
 }
 
-/* ✅ Estos estilos .stat ya no se usan con la tabla, pero los dejo por compatibilidad */
+.statsbar h2{
+  margin:0 0 4px 0;
+  font-size:13px;
+  font-weight:700;
+  color:#374151;
+}
+
+/* Compatibilidad antigua */
 .stat{
   flex:1 1 0;
   display:flex;
@@ -148,12 +202,80 @@ select{
   text-overflow:ellipsis;
 }
 
-/* ===== Layout principal ===== */
-.main{ display:block; overflow:hidden; }
+/* =========================
+   TABLA RESUMEN
+========================= */
 
-/* ✅ El mapa siempre ocupa "lo que sobra":
-   el margin-top/height dependen de --statsbar-h (dinámica).
-*/
+.statsbar--table{
+  justify-content:flex-start;
+}
+
+.stat--table{
+  flex:1;
+  min-width:360px;
+}
+
+.miniTable,
+.group-summary-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+  background: rgba(255,255,255,0.50);
+}
+
+.miniTable th,
+.miniTable td,
+.group-summary-table th,
+.group-summary-table td{
+  padding:4px 8px;
+  border-top:1px solid rgba(0,0,0,.06);
+}
+
+.miniTable thead th,
+.group-summary-table thead th{
+  font-weight:600;
+  opacity:.78;
+  text-align:left;
+  background: rgba(0,0,0,0.025);
+}
+
+.miniTable td:nth-child(2),
+.miniTable td:nth-child(3),
+.miniTable th:nth-child(2),
+.miniTable th:nth-child(3),
+.group-summary-table td:nth-child(2),
+.group-summary-table td:nth-child(3),
+.group-summary-table th:nth-child(2),
+.group-summary-table th:nth-child(3){
+  text-align:right;
+  white-space:nowrap;
+}
+
+.miniTable tfoot th,
+.group-summary-table tfoot td{
+  border-top:2px solid rgba(59,130,246,.75);
+  font-weight:700;
+  background: rgba(59,130,246,0.06);
+}
+
+.miniTable .muted,
+.group-summary-table .muted{
+  opacity:.6;
+  text-align:center;
+  font-style:italic;
+}
+
+/* =========================
+   LAYOUT PRINCIPAL
+========================= */
+
+.main{
+  display:block;
+  overflow:hidden;
+  margin:0;
+  padding:0;
+}
+
 .mapwrap{
   position:relative;
   width:100%;
@@ -161,6 +283,7 @@ select{
   margin-top: calc(var(--topbar-h) + var(--statsbar-h));
   overflow:hidden;
   min-width:0;
+  padding:0;
 }
 
 #map{
@@ -170,7 +293,10 @@ select{
   z-index:1;
 }
 
-/* Toast sobre mapa */
+/* =========================
+   TOAST
+========================= */
+
 .toast{
   position:absolute;
   left:12px;
@@ -179,87 +305,28 @@ select{
   padding:10px 12px;
   border-radius:14px;
   border:1px solid var(--stroke);
-  background: rgba(255,255,255,0.82);
+  background: rgba(255,255,255,0.86);
   box-shadow:var(--shadow);
   color: var(--text);
   font-size:13px;
   display:none;
-  z-index:5;
+  z-index:50;
 }
 
-.toast.show{ display:block; }
-
-/* Select (mejor contraste en móvil) */
-select{ background-color: rgba(255,255,255,0.72); }
-select option{ color: var(--text); background-color: #ffffff; }
-
-@media (max-width:768px){
-  .topbar{
-    padding:10px 10px;
-    gap:10px;
-    height:auto;              /* tu diseño móvil */
-    align-items:flex-start;
-  }
-
-  .controls{ width:100%; }
-  select{ min-width:160px; flex:1 1 160px; }
-
-  /* ✅ statsbar en móvil: puede crecer; el JS medirá altura real */
-  .statsbar{
-    gap:8px;
-    padding:8px 10px;
-  }
-
-  .stat{ padding:6px 8px; border-radius:12px; }
-  .stat .k{ font-size:11px; }
-  .stat .v{ font-size:14px; }
+.toast.show{
+  display:block;
 }
 
-/* ===== Modo tabla (tu panel nuevo) ===== */
-.statsbar--table { justify-content:flex-start; }
-.stat--table { flex:1; min-width:360px; }
+/* =========================
+   MAP HINT
+========================= */
 
-.miniTable{
-  width:100%;
-  border-collapse:collapse;
-  font-size:12px;
-}
-
-.miniTable th, .miniTable td{
-  padding:6px 8px;
-  border-top:1px solid rgba(0,0,0,.06);
-}
-
-.miniTable thead th{
-  font-weight:600;
-  opacity:.75;
-  text-align:left;
-}
-
-.miniTable td:nth-child(2),
-.miniTable td:nth-child(3),
-.miniTable th:nth-child(2),
-.miniTable th:nth-child(3){
-  text-align:right;
-  white-space:nowrap;
-}
-
-.miniTable tfoot th{
-  border-top:2px solid rgba(0,0,0,.10);
-  font-weight:700;
-}
-
-.miniTable .muted{
-  opacity:.6;
-  text-align:center;
-}
-
-.map-hint {
-  position: fixed;
-  left: 0;
-  top: 0;
-  pointer-events: none;
-  z-index: 9999;
+.map-hint{
+  position:fixed;
+  left:0;
+  top:0;
+  pointer-events:none;
+  z-index:9999;
   background: rgba(0,0,0,0.85);
   color: #fff;
   font-size: 13px;
@@ -271,41 +338,206 @@ select option{ color: var(--text); background-color: #ffffff; }
   white-space: nowrap;
 }
 
-#ecosystem-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 56px;
-  background: #020617;
-  border-top: 1px solid #111827;
-  display: flex;
-  z-index: 9999;
+/* =========================
+   MOBILE ECOSYSTEM BAR
+========================= */
+
+#ecosystem-bar{
+  position:fixed;
+  bottom:0;
+  left:0;
+  width:100%;
+  height:var(--mobile-bar-h);
+  background:#020617;
+  border-top:1px solid #111827;
+  display:flex;
+  z-index:9999;
 }
 
-/* Botones */
-#ecosystem-bar a {
-  flex: 1;
-  text-align: center;
-  line-height: 56px;
-  color: #19f0c2;
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
+#ecosystem-bar a{
+  flex:1;
+  text-align:center;
+  line-height:var(--mobile-bar-h);
+  color:#19f0c2;
+  text-decoration:none;
+  font-size:13px;
+  font-weight:500;
 }
 
-/* Hover (desktop fallback) */
-#ecosystem-bar a:hover {
-  background: #111827;
+#ecosystem-bar a:hover{
+  background:#111827;
 }
 
-/* SOLO MOBILE */
-@media (min-width: 768px) {
-  #ecosystem-bar {
-    display: none;
+@media (min-width:768px){
+  #ecosystem-bar{
+    display:none;
   }
 }
 
-.leaflet-bottom {
-  bottom: 60px !important;
+/* Sube controles de Leaflet sobre la barra móvil */
+.leaflet-bottom{
+  bottom:60px !important;
+}
+
+@media (min-width:768px){
+  .leaflet-bottom{
+    bottom:10px !important;
+  }
+}
+
+/* =========================
+   BANNERS LATERALES DESKTOP
+========================= */
+
+:root{
+  --banner-w: 140px;
+  --banner-gap: 14px;     /* aire entre banner y mapa */
+  --banner-left-x: 8px;   /* separación desde borde izq */
+  --banner-right-x: 8px;  /* separación desde borde der */
+}
+
+.banner-left,
+.banner-right{
+  position: fixed;
+  top: calc(var(--topbar-h) + 15px);
+  width: var(--banner-w);
+  height: 600px;
+  z-index: 20;
+  overflow: hidden;
+  background: transparent;
+  display: none;
+}
+
+.banner-left{
+  left: var(--banner-left-x);
+}
+
+.banner-right{
+  right: var(--banner-right-x);
+}
+
+.banner-left iframe,
+.banner-right iframe{
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
+@media (min-width: 1200px){
+  .banner-left,
+  .banner-right{
+    display: block;
+  }
+
+  .main,
+  .mapwrap{
+    margin-left: calc(var(--banner-left-x) + var(--banner-w) + var(--banner-gap));
+    margin-right: calc(var(--banner-right-x) + var(--banner-w) + var(--banner-gap));
+  }
+}
+
+/* Ajuste óptico fino */
+.banner-left{
+  left:10px;
+}
+
+.banner-right{
+  right:8px;
+}
+
+/* iframe interno */
+.banner-left iframe,
+.banner-right iframe{
+  width:140px;
+  height:600px;
+  border:none;
+  display:block;
+}
+
+/* Desktop amplio */
+
+
+/* =========================
+   RESPONSIVE
+========================= */
+
+@media (max-width:900px){
+  .topbar{
+    padding:8px 10px;
+  }
+
+  .topbar-inner{
+    flex-wrap:wrap;
+    gap:8px;
+    align-items:flex-start;
+  }
+
+  .brand{
+    width:100%;
+  }
+
+  .logo{
+    width:34px;
+    height:34px;
+    font-size:16px;
+  }
+
+  .title h1{
+    font-size:15px;
+  }
+
+  .title span{
+    font-size:11px;
+    white-space:normal;
+    overflow:visible;
+    text-overflow:clip;
+  }
+
+  .controls{
+    width:100%;
+  }
+
+  select{
+    min-width:160px;
+    width:100%;
+    flex:1 1 160px;
+  }
+
+  .statsbar{
+    padding:6px 10px 7px;
+  }
+
+  .statsbar h2{
+    font-size:12px;
+    margin-bottom:4px;
+  }
+
+  .miniTable,
+  .group-summary-table{
+    font-size:11px;
+  }
+
+  .miniTable th,
+  .miniTable td,
+  .group-summary-table th,
+  .group-summary-table td{
+    padding:4px 6px;
+  }
+}
+
+@media (max-width:767px){
+  body{
+    padding-left:0;
+    padding-right:0;
+  }
+
+  .banner-left,
+  .banner-right{
+    display:none !important;
+  }
+
+  .mapwrap{
+    height: calc(100dvh - var(--topbar-h) - var(--statsbar-h) - var(--mobile-bar-h));
+  }
 }
