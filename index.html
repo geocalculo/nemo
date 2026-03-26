@@ -24,10 +24,6 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="css/index.css" />
-
-
-
-
 </head>
 <body>
 
@@ -37,15 +33,6 @@
       height="0" width="0" style="display:none;visibility:hidden"></iframe>
   </noscript>
   <!-- End Google Tag Manager (noscript) -->
-
-  <!-- BANNERS LATERALES (solo desktop) -->
-  <div class="banner-left" aria-hidden="true">
-    <iframe src="banners/banner_01_geoipt.html" loading="lazy" scrolling="no"></iframe>
-  </div>
-
-  <div class="banner-right" aria-hidden="true">
-    <iframe src="banners/banner_geoeva_01.html" loading="lazy" scrolling="no"></iframe>
-  </div>
 
   <header class="topbar">
     <div class="topbar-inner">
@@ -80,8 +67,8 @@
     Haz clic en el mapa para explorar áreas protegidas
   </div>
 
-  <!-- Resumen por grupo oculto, pero conservando IDs para la barra superior -->
-  <div style="display:none;" aria-hidden="true">
+  <!-- Resumen por grupo oculto, conservando IDs para espejo en topbar -->
+  <div class="sr-summary" aria-hidden="true">
     <table>
       <tbody id="groupSummaryBody">
         <tr><td colspan="3" class="muted">—</td></tr>
@@ -97,10 +84,24 @@
   </div>
 
   <main class="main">
-    <section class="mapwrap">
-      <div id="map"></div>
-      <div id="toast" class="toast" aria-live="polite"></div>
-    </section>
+    <div class="layout-home">
+
+      <aside class="side-banner side-banner-left" aria-hidden="true">
+        <iframe src="banners/banner_01_geoipt.html" title="Banner GeoIPT" loading="lazy" scrolling="no"></iframe>
+      </aside>
+
+      <section class="map-column">
+        <section class="mapwrap">
+          <div id="map"></div>
+          <div id="toast" class="toast" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <aside class="side-banner side-banner-right" aria-hidden="true">
+        <iframe src="banners/banner_geoeva_01.html" title="Banner GeoEVA" loading="lazy" scrolling="no"></iframe>
+      </aside>
+
+    </div>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -109,7 +110,6 @@
   <script src="js/index.js"></script>
 
   <script>
-    /* Espeja los totales del resumen en la barra superior */
     (function () {
       const totalN = document.getElementById('groupSummaryTotalN');
       const totalArea = document.getElementById('groupSummaryTotalArea');

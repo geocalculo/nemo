@@ -11,9 +11,8 @@
 const REGIONES_URL = "data/regiones.json";
 const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
 
-// ✅ Zoom de ingreso / región (lo que pediste)
-const ENTRY_ZOOM = 10;   // 17 o 18
-const REGION_ZOOM = 10;  // 17 o 18
+const ENTRY_ZOOM = 10;
+const REGION_ZOOM = 10;
 
 const OUT_STORAGE_KEY = "geonemo_out_v2";
 const MAP_PREF_KEY = "geonemo_map_pref";
@@ -26,7 +25,6 @@ let clickMarker = null;
 let topoBase = null;
 let satOverlay = null;
 
-// ✅ Debounce para invalidateSize() cuando cambian alturas (evita loops)
 let _mapResizeRAF = false;
 function scheduleMapInvalidateSize() {
   if (!map || _mapResizeRAF) return;
@@ -37,9 +35,39 @@ function scheduleMapInvalidateSize() {
   });
 }
 
-// ✅ Cache de archivos: fileUrl -> { loaded:boolean, featuresIndex:[{feature,bbox,areaM2}] }
-const fileState = new Map();
+function debounce(callback, delayMs) {
+  let timerId = null;
+  return (...args) => {
+    if (timerId) clearTimeout(timerId);
+    timerId = window.setTimeout(() => {
+      timerId = null;
+      callback(...args);
+    }, delayMs);
+  };
+}
 
+function syncMapSize() {
+  if (!map) return;
+  requestAnimationFrame(() => {
+    try { map.invalidateSize(false); } catch (_) {}
+  });
+}
+
+function attachMapResizeSync() {
+  const debouncedSync = debounce(syncMapSize, 120);
+  window.addEventListener("load", debouncedSync, { passive: true });
+  window.addEventListener("resize", debouncedSync, { passive: true });
+  window.addEventListener("orientationchange", debouncedSync, { passive: true });
+
+  const desktopLayoutMedia = window.matchMedia("(max-width: 1199px)");
+  if (typeof desktopLayoutMedia.addEventListener === "function") {
+    desktopLayoutMedia.addEventListener("change", debouncedSync);
+  } else if (typeof desktopLayoutMedia.addListener === "function") {
+    desktopLayoutMedia.addListener(debouncedSync);
+  }
+}
+
+const fileState = new Map();
 let GROUPS = [];
 
 /* ===========================
@@ -141,14 +169,10 @@ function syncMapPrefFromCurrentLayers(){
   });
 }
 
-// ✅ Auto-sync altura real de .statsbar → CSS var --statsbar-h (sin franjas)
 function initStatsbarAutoHeight() {
   const root = document.documentElement;
   const stats = document.querySelector(".statsbar");
-  if (!stats) {
-    console.warn("[statsbar] .statsbar no encontrado (auto-height no aplicado).");
-    return;
-  }
+  if (!stats) return;
 
   let raf = 0;
   const apply = () => {
@@ -157,13 +181,10 @@ function initStatsbarAutoHeight() {
       raf = 0;
 
       const h = Math.ceil(stats.getBoundingClientRect().height);
-
       const prev = parseInt(getComputedStyle(root).getPropertyValue("--statsbar-h")) || 0;
       if (Math.abs(h - prev) <= 1) return;
 
       root.style.setProperty("--statsbar-h", `${h}px`);
-
-      // ✅ CORRECCIÓN CRÍTICA: Cuando cambia altura del panel, Leaflet debe redimensionarse
       scheduleMapInvalidateSize();
     });
   };
@@ -173,13 +194,9 @@ function initStatsbarAutoHeight() {
   if ("ResizeObserver" in window) {
     const ro = new ResizeObserver(() => apply());
     ro.observe(stats);
-
     window.addEventListener("resize", apply, { passive: true });
     window.__syncStatsbarHeight = apply;
-
-    console.log("[statsbar] Auto-height activo (ResizeObserver).");
   } else {
-    console.warn("[statsbar] ResizeObserver no disponible, usando fallback por resize.");
     window.addEventListener("resize", apply, { passive: true });
     window.__syncStatsbarHeight = apply;
   }
@@ -216,7 +233,6 @@ function initTopbarAutoHeight() {
   }
 }
 
-// ✅ Ejecutar cuando el DOM esté listo
 document.addEventListener("DOMContentLoaded", () => {
   initStatsbarAutoHeight();
   initTopbarAutoHeight();
@@ -229,7 +245,7 @@ function crearMapa() {
   map = L.map("map", { zoomControl: true, preferCanvas: true })
     .setView(HOME_VIEW.center, HOME_VIEW.zoom);
 
-  initMapCursorHint(map);  
+  initMapCursorHint(map);
 
   topoBase = L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -243,12 +259,11 @@ function crearMapa() {
     }
   );
 
-  // ✅ Subimos maxZoom para que no se “corte” si usas zoom 18
   satOverlay = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     {
       name: "Esri Satélite",
-      maxZoom: 19, // 👈 antes 17
+      maxZoom: 19,
       opacity: 0.25,
       attribution: "Tiles &copy; Esri",
       crossOrigin: true,
@@ -266,18 +281,18 @@ function crearMapa() {
   map.on("layerremove", syncMapPrefFromCurrentLayers);
   syncMapPrefFromCurrentLayers();
 
-  // ✅ Eventos que disparan actualización de estadísticas
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
   map.on("click", onMapClick);
 
-  // ✅ Trigger inicial cuando el mapa esté listo
   map.whenReady(() => {
     setTimeout(() => {
-      map.invalidateSize(true);
+      syncMapSize();
       scheduleStatsUpdate();
     }, 250);
   });
+
+  attachMapResizeSync();
 }
 
 /* ===========================
@@ -298,12 +313,10 @@ function tryAutoCenterOnUser() {
 
       map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
       toast("🎯 Centrado en tu ubicación", 1400);
-      setTimeout(() => map.invalidateSize(true), 150);
+      setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
     },
-    () => {
-      // Si se niega o falla, nos quedamos en HOME_VIEW sin “ruido”
-    },
+    () => {},
     { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
   );
 }
@@ -334,7 +347,6 @@ async function cargarRegiones() {
     opt.value = String(r.codigo_ine ?? r.id ?? r.nombre ?? "");
     opt.textContent = r.nombre ?? opt.value;
     opt.dataset.center = JSON.stringify(r.centro || r.center || null);
-    // mantenemos el zoom en dataset por compat, aunque lo ignoraremos
     opt.dataset.zoom = String(r.zoom ?? 7);
     sel.appendChild(opt);
   }
@@ -357,9 +369,8 @@ async function cargarRegiones() {
     }
 
     if (center && isFinite(center[0]) && isFinite(center[1])) {
-      // ✅ SIEMPRE mismo zoom al seleccionar región
       map.setView(center, REGION_ZOOM, { animate: true });
-      setTimeout(() => map.invalidateSize(true), 150);
+      setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
     } else {
       console.warn("[GeoNEMO] Región sin centro válido:", opt.value, opt.dataset.center);
@@ -467,7 +478,6 @@ async function ensureFileLoaded(fileUrl){
 /* ===========================
    Resumen por grupo (BBOX) -> Tabla
 =========================== */
-// ✅ Referencias a elementos del DOM
 const elGroupBody = document.getElementById("groupSummaryBody");
 const elGroupTotN = document.getElementById("groupSummaryTotalN");
 const elGroupTotA = document.getElementById("groupSummaryTotalArea");
@@ -673,7 +683,6 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
     };
   }
 
-  // 1) inside
   for (const fileUrl of files){
     const st = await ensureFileLoaded(fileUrl);
     const idx = st.featuresIndex || [];
@@ -706,7 +715,6 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
     }
   }
 
-  // 2) nearest perimeter
   let bestD = Infinity;
   let bestFeat = null;
   let bestFile = null;
@@ -842,7 +850,7 @@ function bindUI() {
     btnHome.addEventListener("click", () => {
       map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true });
       toast("🏠 Vista inicial", 1200);
-      setTimeout(() => map.invalidateSize(true), 150);
+      setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
     });
   }
@@ -865,11 +873,10 @@ function bindUI() {
             radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
           }).addTo(map);
 
-          // ✅ Zoom fijo pedido
           map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
 
           toast("🎯 Ubicación detectada", 1400);
-          setTimeout(() => map.invalidateSize(true), 150);
+          setTimeout(() => syncMapSize(), 150);
           scheduleStatsUpdate();
         },
         () => toast("⚠️ No pude obtener tu ubicación", 2600),
@@ -899,16 +906,15 @@ function bindUI() {
   }
 }
 
-
 function initMapCursorHint(mapInstance) {
   const hint = document.getElementById("map-hint-cursor");
   if (!hint || !mapInstance) return;
 
   const isTouch = window.matchMedia("(pointer: coarse)").matches;
-  if (isTouch) return; // solo desktop
+  if (isTouch) return;
 
-  const OFFSET_X = 18;   // a la derecha del puntero
-  const OFFSET_Y = -14;  // levemente arriba
+  const OFFSET_X = 18;
+  const OFFSET_Y = -14;
 
   function moveHint(x, y) {
     hint.style.left = `${x + OFFSET_X}px`;
@@ -917,6 +923,10 @@ function initMapCursorHint(mapInstance) {
 
   function showHint() {
     hint.style.opacity = "1";
+  }
+
+  function hideHint() {
+    hint.style.opacity = "0";
   }
 
   const mapEl = mapInstance.getContainer();
@@ -932,11 +942,9 @@ function initMapCursorHint(mapInstance) {
     showHint();
   });
 
-  mapEl.addEventListener("mouseleave", () => {
-    hint.style.opacity = "1";
-  });
+  mapEl.addEventListener("mouseleave", hideHint);
+  mapEl.addEventListener("mousedown", hideHint);
 }
-
 
 /* ===========================
    Init
@@ -946,7 +954,6 @@ function initMapCursorHint(mapInstance) {
   bindUI();
   await cargarRegiones();
 
-  // ✅ Intentar centrar en el usuario por defecto (sin apretar GPS)
   tryAutoCenterOnUser();
 
   try {
@@ -959,14 +966,10 @@ function initMapCursorHint(mapInstance) {
     GROUPS = [];
   }
 
-  // ✅ Precarga liviana: primer archivo del primer grupo habilitado
   const firstGroup = GROUPS.find(g => g.enabled !== false) || GROUPS[0];
   const firstFile = firstGroup?.files?.[0];
   if (firstFile) ensureFileLoaded(firstFile).catch(() => {});
 
-  // ✅ Trigger inicial de estadísticas
   scheduleStatsUpdate();
   toast("Listo ✅ Mueve/zoom para ver resumen por grupo. Click para abrir MapaOut.", 2200);
 })();
-
-
