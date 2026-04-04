@@ -549,6 +549,24 @@ async function cargarRegiones() {
       toast("⚠️ Esta región no tiene centro (revisa data/regiones.json)", 2400);
     }
   });
+
+    // 👇 REAFIRMAR VIEWPORT (estilo GeoIPT)
+  if (!initialViewport?.hasIncomingViewport) {
+    setTimeout(() => {
+      console.log("[GeoNEMO] fallback Coquimbo post-regiones");
+
+      map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
+
+      // importante en tu caso (tienes layout dinámico)
+      if (typeof syncMapSize === "function") {
+        syncMapSize();
+      } else {
+        map.invalidateSize(true);
+      }
+
+      scheduleStatsUpdate?.();
+    }, 120);
+  }
 }
 
 /* ===========================
