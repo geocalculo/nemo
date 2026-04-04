@@ -125,14 +125,46 @@ function buildCrossSiteUrl(baseUrl) {
   return url.toString();
 }
 
-function handleCrossSiteNavigation(event, el) {
-  event.preventDefault();
-  const baseUrl = el?.dataset?.crossSiteUrl;
-  if (!baseUrl) return;
-  window.location.href = buildCrossSiteUrl(baseUrl);
+function goToGeoIPT(e){
+  e.preventDefault();
+
+  const base = "https://geoipt.cl/?utm_source=geonemo&utm_medium=card&utm_campaign=cruce_portales&utm_content=geoipt_lateral";
+  const url = buildCrossSiteUrl(base);
+  window.open(url, "_blank", "noopener");
+  return false;
 }
 
-window.handleCrossSiteNavigation = handleCrossSiteNavigation;
+function goToGeoEVA(e){
+  e.preventDefault();
+
+  const base = "https://geoeva.cl/?utm_source=geonemo&utm_medium=card&utm_campaign=cruce_portales&utm_content=geoeva_lateral";
+  const url = buildCrossSiteUrl(base);
+  window.open(url, "_blank", "noopener");
+  return false;
+}
+
+function goToGeoIPTMobile(e){
+  e.preventDefault();
+
+  const base = "https://geoipt.cl/?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema";
+  const url = buildCrossSiteUrl(base);
+  window.open(url, "_blank", "noopener");
+  return false;
+}
+
+function goToGeoEVAMobile(e){
+  e.preventDefault();
+
+  const base = "https://geoeva.cl/?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema";
+  const url = buildCrossSiteUrl(base);
+  window.open(url, "_blank", "noopener");
+  return false;
+}
+
+window.goToGeoIPT = goToGeoIPT;
+window.goToGeoEVA = goToGeoEVA;
+window.goToGeoIPTMobile = goToGeoIPTMobile;
+window.goToGeoEVAMobile = goToGeoEVAMobile;
 
 /* ===========================
    Turf check
