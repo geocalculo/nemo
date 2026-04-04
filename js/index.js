@@ -1085,9 +1085,7 @@ function initMapCursorHint(mapInstance) {
   bindUI();
   await cargarRegiones();
 
-  if (!incomingViewport.hasIncomingViewport) {
-    tryAutoCenterOnUser();
-  }
+
 
   try {
     GROUPS = await loadGroupsMaster(GROUPS_URL);
