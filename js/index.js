@@ -9,7 +9,7 @@
  ************************************************************/
 
 const REGIONES_URL = "data/regiones.json";
-const HOME_VIEW = { center: [-33.5, -71.0], zoom: 5 };
+const HOME_VIEW = { center: [-29.95, -71.25], zoom: 7 };
 
 const ENTRY_ZOOM = 10;
 const REGION_ZOOM = 10;
@@ -359,7 +359,12 @@ document.addEventListener("DOMContentLoaded", () => {
    Map init
 =========================== */
 function crearMapa(initialViewport) {
-  map = L.map("map", { zoomControl: true, preferCanvas: true });
+  map = L.map("map", {
+    zoomControl: true,
+    preferCanvas: true,
+    center: HOME_VIEW.center,
+    zoom: HOME_VIEW.zoom
+  });
 
   if (initialViewport?.type === "bbox") {
     map.fitBounds(initialViewport.bounds, { animate: false });
