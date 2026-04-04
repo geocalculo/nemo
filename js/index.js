@@ -412,7 +412,7 @@ function crearMapa(initialViewport) {
   const pref = readMapPref();
 
   topoBase.addTo(map);
-  const wantSat = (pref.overlay === "Esri Satélite") || (pref.overlay == null);
+  const wantSat = (pref.overlay === "Esri Satélite");
   if (wantSat) satOverlay.addTo(map);
 
   map.on("layeradd", syncMapPrefFromCurrentLayers);
