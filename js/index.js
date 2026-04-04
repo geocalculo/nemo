@@ -422,6 +422,15 @@ function crearMapa(initialViewport) {
   });
 
   attachMapResizeSync();
+
+  // FORZAR HOME VIEW SIEMPRE
+  setTimeout(() => {
+    if (!initialViewport || !initialViewport.hasIncomingViewport) {
+      map.setView(HOME_VIEW.center, HOME_VIEW.zoom);
+      console.log("[FIX] Forzando HOME_VIEW");
+    }
+  }, 100);
+
 }
 
 /* ===========================
