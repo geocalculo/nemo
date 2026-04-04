@@ -365,24 +365,12 @@ function crearMapa(initialViewport) {
     zoomControl: true,
     preferCanvas: true,
     center: HOME_VIEW.center,
-    zoom: HOME_VIEW.zoom
+    zoom: HOME_VIEW.zoom,
+    minZoom: 4,
+    maxZoom: 19
   });
 
-  // Aplicar viewport inicial UNA SOLA VEZ.
-  // El constructor ya dejó el mapa en HOME_VIEW, así que solo
-  // actuamos si viene un viewport externo.
-  if (initialViewport?.type === "bbox") {
-    requestAnimationFrame(() => {
-      map.fitBounds(initialViewport.bounds, { animate: false });
-    });
-  } else if (initialViewport?.type === "coords") {
-    map.setView(
-      [initialViewport.lat, initialViewport.lon],
-      initialViewport.zoom,
-      { animate: false }
-    );
-  }
-  // type === "default" → el constructor ya aplicó HOME_VIEW, no hacer nada más.
+
 
   initMapCursorHint(map);
 
@@ -410,6 +398,37 @@ function crearMapa(initialViewport) {
     overlayOpacity: 0
   });
 
+    const applyInitialViewport = () => {
+    if (initialViewport?.type === "bbox") {
+      map.fitBounds(initialViewport.bounds, {
+        animate: false,
+        padding: [20, 20],
+        maxZoom: 12
+      });
+    } else if (initialViewport?.type === "coords") {
+      map.setView(
+        [initialViewport.lat, initialViewport.lon],
+        initialViewport.zoom,
+        { animate: false }
+      );
+    } else {
+      map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
+    }
+  };
+
+  topoBase.once("load", () => {
+    requestAnimationFrame(() => {
+      map.invalidateSize(true);
+      applyInitialViewport();
+
+      setTimeout(() => {
+        map.invalidateSize(true);
+        applyInitialViewport();
+        scheduleStatsUpdate();
+      }, 180);
+    });
+  });
+
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
   map.on("click", onMapClick);
@@ -417,7 +436,7 @@ function crearMapa(initialViewport) {
   // whenReady: solo sincronizar tamaño y stats, nunca tocar el viewport.
   map.whenReady(() => {
     setTimeout(() => {
-      syncMapSize();
+      map.invalidateSize(true);
       scheduleStatsUpdate();
     }, 250);
   });
