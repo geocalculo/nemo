@@ -167,11 +167,12 @@ function buildCrossSiteUrl(baseUrl) {
   const center = map.getCenter();
   const zoom = map.getZoom();
   const bounds = map.getBounds();
+
   const bbox = [
-    bounds.getSouth(),
-    bounds.getWest(),
     bounds.getNorth(),
-    bounds.getEast()
+    bounds.getEast(),
+    bounds.getSouth(),
+    bounds.getWest()
   ].join(",");
 
   url.searchParams.set("lat", String(center.lat));
@@ -397,27 +398,17 @@ function crearMapa(initialViewport) {
     }
   );
 
-  satOverlay = L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    {
-      name: "Esri Satélite",
-      maxZoom: 19,
-      opacity: 0.25,
-      attribution: "Tiles &copy; Esri",
-      crossOrigin: true,
-      updateWhenIdle: true
-    }
-  );
 
-  const pref = readMapPref();
 
   topoBase.addTo(map);
-  const wantSat = (pref.overlay === "Esri Satélite");
-  if (wantSat) satOverlay.addTo(map);
 
-  map.on("layeradd", syncMapPrefFromCurrentLayers);
-  map.on("layerremove", syncMapPrefFromCurrentLayers);
-  syncMapPrefFromCurrentLayers();
+  // En index, solo OSM.
+  // No cargar ni aplicar satélite, overlays ni preferencias de mapa.
+  writeMapPref({
+    base: "OpenStreetMap",
+    overlay: null,
+    overlayOpacity: 0
+  });
 
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
