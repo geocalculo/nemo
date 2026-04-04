@@ -25,6 +25,61 @@ let clickMarker = null;
 let topoBase = null;
 let satOverlay = null;
 
+function toFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseIncomingViewport() {
+  const params = new URLSearchParams(window.location.search || "");
+
+  const lat = toFiniteNumber(params.get("lat"));
+  const lon = toFiniteNumber(params.get("lon"));
+  const zoom = toFiniteNumber(params.get("zoom"));
+
+  const hasValidCoords =
+    lat != null && lon != null && zoom != null &&
+    lat >= -90 && lat <= 90 &&
+    lon >= -180 && lon <= 180 &&
+    zoom >= 0 && zoom <= 22;
+
+  const bboxRaw = params.get("bbox");
+  if (bboxRaw) {
+    const parts = bboxRaw.split(",").map(toFiniteNumber);
+    if (parts.length === 4 && parts.every((v) => v != null)) {
+      // Contrato del ecosistema: north,east,south,west
+      const [north, east, south, west] = parts;
+      const validNesw =
+        north <= 90 && north >= -90 &&
+        south <= 90 && south >= -90 &&
+        east <= 180 && east >= -180 &&
+        west <= 180 && west >= -180 &&
+        north > south &&
+        east > west;
+
+      if (validNesw) {
+        return {
+          hasIncomingViewport: true,
+          type: "bbox",
+          bounds: L.latLngBounds([south, west], [north, east])
+        };
+      }
+    }
+  }
+
+  if (hasValidCoords) {
+    return {
+      hasIncomingViewport: true,
+      type: "coords",
+      lat,
+      lon,
+      zoom
+    };
+  }
+
+  return { hasIncomingViewport: false, type: "default" };
+}
+
 let _mapResizeRAF = false;
 function scheduleMapInvalidateSize() {
   if (!map || _mapResizeRAF) return;
@@ -303,9 +358,16 @@ document.addEventListener("DOMContentLoaded", () => {
 /* ===========================
    Map init
 =========================== */
-function crearMapa() {
-  map = L.map("map", { zoomControl: true, preferCanvas: true })
-    .setView(HOME_VIEW.center, HOME_VIEW.zoom);
+function crearMapa(initialViewport) {
+  map = L.map("map", { zoomControl: true, preferCanvas: true });
+
+  if (initialViewport?.type === "bbox") {
+    map.fitBounds(initialViewport.bounds, { animate: false });
+  } else if (initialViewport?.type === "coords") {
+    map.setView([initialViewport.lat, initialViewport.lon], initialViewport.zoom, { animate: false });
+  } else {
+    map.setView(HOME_VIEW.center, HOME_VIEW.zoom);
+  }
 
   initMapCursorHint(map);
 
@@ -1012,11 +1074,15 @@ function initMapCursorHint(mapInstance) {
    Init
 =========================== */
 (async function init() {
-  crearMapa();
+  const incomingViewport = parseIncomingViewport();
+
+  crearMapa(incomingViewport);
   bindUI();
   await cargarRegiones();
 
-  tryAutoCenterOnUser();
+  if (!incomingViewport.hasIncomingViewport) {
+    tryAutoCenterOnUser();
+  }
 
   try {
     GROUPS = await loadGroupsMaster(GROUPS_URL);
