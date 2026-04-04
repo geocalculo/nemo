@@ -104,6 +104,36 @@ function bboxContainsLonLat(bb, lon, lat) {
   return lon >= bb[0] && lon <= bb[2] && lat >= bb[1] && lat <= bb[3];
 }
 
+function buildCrossSiteUrl(baseUrl) {
+  const url = new URL(baseUrl);
+  if (!map) return url.toString();
+
+  const center = map.getCenter();
+  const zoom = map.getZoom();
+  const bounds = map.getBounds();
+  const bbox = [
+    bounds.getSouth(),
+    bounds.getWest(),
+    bounds.getNorth(),
+    bounds.getEast()
+  ].join(",");
+
+  url.searchParams.set("lat", String(center.lat));
+  url.searchParams.set("lon", String(center.lng));
+  url.searchParams.set("zoom", String(zoom));
+  url.searchParams.set("bbox", bbox);
+  return url.toString();
+}
+
+function handleCrossSiteNavigation(event, el) {
+  event.preventDefault();
+  const baseUrl = el?.dataset?.crossSiteUrl;
+  if (!baseUrl) return;
+  window.location.href = buildCrossSiteUrl(baseUrl);
+}
+
+window.handleCrossSiteNavigation = handleCrossSiteNavigation;
+
 /* ===========================
    Turf check
 =========================== */
