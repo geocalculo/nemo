@@ -370,7 +370,22 @@ function crearMapa(initialViewport) {
     maxZoom: 19
   });
 
-
+    // 👇 FORZAR viewport inicial inmediato (CRÍTICO)
+  if (initialViewport?.type === "bbox") {
+    map.fitBounds(initialViewport.bounds, {
+      animate: false,
+      padding: [20, 20],
+      maxZoom: 12
+    });
+  } else if (initialViewport?.type === "coords") {
+    map.setView(
+      [initialViewport.lat, initialViewport.lon],
+      initialViewport.zoom,
+      { animate: false }
+    );
+  } else {
+    map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
+  }
 
   initMapCursorHint(map);
 
