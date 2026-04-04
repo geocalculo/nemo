@@ -24,6 +24,7 @@ let clickMarker = null;
 
 let topoBase = null;
 let satOverlay = null;
+let initialViewport = null;
 
 function toFiniteNumber(value) {
   const n = Number(value);
@@ -366,12 +367,18 @@ function crearMapa(initialViewport) {
     zoom: HOME_VIEW.zoom
   });
 
-  if (initialViewport?.type === "bbox") {
-    map.fitBounds(initialViewport.bounds, { animate: false });
-  } else if (initialViewport?.type === "coords") {
-    map.setView([initialViewport.lat, initialViewport.lon], initialViewport.zoom, { animate: false });
+  if (initialViewport?.hasIncomingViewport && initialViewport?.type === "bbox") {
+    if (initialViewport?.hasIncomingViewport) {
+      map.fitBounds(initialViewport.bounds, { animate: false });
+    }
+  } else if (initialViewport?.hasIncomingViewport && initialViewport?.type === "coords") {
+    if (initialViewport?.hasIncomingViewport) {
+      map.setView([initialViewport.lat, initialViewport.lon], initialViewport.zoom, { animate: false });
+    }
   } else {
-    map.setView(HOME_VIEW.center, HOME_VIEW.zoom);
+    if (!initialViewport?.hasIncomingViewport) {
+      map.setView(HOME_VIEW.center, HOME_VIEW.zoom);
+    }
   }
 
   initMapCursorHint(map);
@@ -449,7 +456,9 @@ function tryAutoCenterOnUser() {
         radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
       }).addTo(map);
 
-      map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
+      if (initialViewport?.hasIncomingViewport) {
+        map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
+      }
       toast("🎯 Centrado en tu ubicación", 1400);
       setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
@@ -507,7 +516,9 @@ async function cargarRegiones() {
     }
 
     if (center && isFinite(center[0]) && isFinite(center[1])) {
-      map.setView(center, REGION_ZOOM, { animate: true });
+      if (initialViewport?.hasIncomingViewport) {
+        map.setView(center, REGION_ZOOM, { animate: true });
+      }
       setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
     } else {
@@ -986,7 +997,9 @@ function bindUI() {
 
   if (btnHome) {
     btnHome.addEventListener("click", () => {
-      map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true });
+      if (initialViewport?.hasIncomingViewport) {
+        map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true });
+      }
       toast("🏠 Vista inicial", 1200);
       setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
@@ -1011,7 +1024,9 @@ function bindUI() {
             radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
           }).addTo(map);
 
-          map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
+          if (initialViewport?.hasIncomingViewport) {
+            map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
+          }
 
           toast("🎯 Ubicación detectada", 1400);
           setTimeout(() => syncMapSize(), 150);
@@ -1088,9 +1103,9 @@ function initMapCursorHint(mapInstance) {
    Init
 =========================== */
 (async function init() {
-  const incomingViewport = parseIncomingViewport();
+  initialViewport = parseIncomingViewport();
 
-  crearMapa(incomingViewport);
+  crearMapa(initialViewport);
   bindUI();
   await cargarRegiones();
 
