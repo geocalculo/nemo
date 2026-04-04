@@ -11,7 +11,10 @@
   --primary2:#22c55e;
   --accent:#bef264;
 
-  --topbar-h: 64px;
+  /* Valor inicial conservador (alto): JS lo corrige al valor real
+     con initTopbarAutoHeight(). Evita que el mapa se superponga
+     al topbar en el primer render antes de que JS mida. */
+  --topbar-h: 120px;
   --statsbar-h: 0px;
   --mobile-bar-h: 56px;
 
@@ -205,6 +208,10 @@ select option{
 .mapwrap{
   position:relative;
   width:100%;
+  /* min-height garantiza que Leaflet siempre tenga un contenedor
+     con altura real al inicializar, aunque --topbar-h aún no
+     haya sido calculado por JS. */
+  min-height: 300px;
   height: calc(100dvh - var(--topbar-h) - var(--statsbar-h) - 14px);
   overflow:hidden;
   min-width:0;
@@ -216,6 +223,9 @@ select option{
 #map{
   width:100%;
   height:100%;
+  /* min-height evita que Leaflet init con altura 0 y quede
+     en zoom mundial en vez de zoom 7 sobre Chile. */
+  min-height: 300px;
   background:#eaf6da;
   z-index:1;
 }
@@ -420,26 +430,25 @@ select option{
     font-size:16px;
   }
 
-.brand-name{
-  margin:0;
-  font-size:16px;
-  line-height:1.1;
-  font-weight:800;
-  color: var(--text);
-}
+  .brand-name{
+    margin:0;
+    font-size:16px;
+    line-height:1.1;
+    font-weight:800;
+    color: var(--text);
+  }
 
-.brand-tagline{
-  display:block;
-  font-size:14px;  /* 🔥 clave */
-  line-height:1.25;
-  font-weight:500;
-  color:rgba(11,15,13,0.70);
-  margin-top:2px;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-
+  .brand-tagline{
+    display:block;
+    font-size:14px;
+    line-height:1.25;
+    font-weight:500;
+    color:rgba(11,15,13,0.70);
+    margin-top:2px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
 
   .topbar-right{
     width:100%;
@@ -479,4 +488,20 @@ select option{
   #visitor-counter{
     bottom:68px !important;
   }
+}
+
+/* =========================
+   FIX CRÍTICO LEAFLET (tiles)
+========================= */
+
+.leaflet-container img,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow {
+  max-width: none !important;
+}
+
+.leaflet-tile {
+  width: 256px !important;
+  height: 256px !important;
 }

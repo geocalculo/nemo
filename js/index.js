@@ -367,13 +367,21 @@ function crearMapa(initialViewport) {
     zoom: HOME_VIEW.zoom
   });
 
-  if (initialViewport?.hasIncomingViewport && initialViewport?.type === "bbox") {
+  // Aplicar viewport inicial UNA SOLA VEZ.
+  // El constructor ya dejó el mapa en HOME_VIEW, así que solo
+  // actuamos si viene un viewport externo.
+  if (initialViewport?.type === "bbox") {
     requestAnimationFrame(() => {
       map.fitBounds(initialViewport.bounds, { animate: false });
     });
-  } else if (initialViewport?.hasIncomingViewport && initialViewport?.type === "coords") {
-    map.setView([initialViewport.lat, initialViewport.lon], initialViewport.zoom, { animate: false });
+  } else if (initialViewport?.type === "coords") {
+    map.setView(
+      [initialViewport.lat, initialViewport.lon],
+      initialViewport.zoom,
+      { animate: false }
+    );
   }
+  // type === "default" → el constructor ya aplicó HOME_VIEW, no hacer nada más.
 
   initMapCursorHint(map);
 
@@ -415,13 +423,15 @@ function crearMapa(initialViewport) {
   map.on("zoomend", scheduleStatsUpdate);
   map.on("click", onMapClick);
 
+  // whenReady: solo sincronizar tamaño y stats, nunca tocar el viewport.
   map.whenReady(() => {
-    syncMapSize();
-    scheduleStatsUpdate();
+    setTimeout(() => {
+      syncMapSize();
+      scheduleStatsUpdate();
+    }, 250);
   });
 
   attachMapResizeSync();
-
 }
 
 /* ===========================
@@ -440,9 +450,13 @@ function tryAutoCenterOnUser() {
         radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
       }).addTo(map);
 
+      // Solo centrar automáticamente si NO viene viewport externo.
+      // Si viene viewport externo, el usuario llegó desde otro portal:
+      // respetar ese viewport y no pisarlo.
       if (!initialViewport?.hasIncomingViewport) {
         map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
       }
+
       toast("🎯 Centrado en tu ubicación", 1400);
       setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
@@ -500,6 +514,8 @@ async function cargarRegiones() {
     }
 
     if (center && isFinite(center[0]) && isFinite(center[1])) {
+      // El usuario eligió una región → siempre navegar, sin importar
+      // si hay viewport externo.
       map.setView(center, REGION_ZOOM, { animate: true });
       setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
@@ -979,6 +995,8 @@ function bindUI() {
 
   if (btnHome) {
     btnHome.addEventListener("click", () => {
+      // Siempre volver a HOME_VIEW al pulsar Home, sin importar
+      // si hay viewport externo.
       map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true });
       toast("🏠 Vista inicial", 1200);
       setTimeout(() => syncMapSize(), 150);
@@ -1004,6 +1022,8 @@ function bindUI() {
             radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
           }).addTo(map);
 
+          // El usuario pulsó GPS explícitamente → siempre centrar,
+          // sin importar si hay viewport externo.
           map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
 
           toast("🎯 Ubicación detectada", 1400);
@@ -1086,8 +1106,6 @@ function initMapCursorHint(mapInstance) {
   crearMapa(initialViewport);
   bindUI();
   await cargarRegiones();
-
-
 
   try {
     GROUPS = await loadGroupsMaster(GROUPS_URL);

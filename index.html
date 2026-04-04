@@ -23,7 +23,6 @@
   <meta name="description" content="Explora áreas protegidas, restricciones y sensibilidad territorial en Chile. Analiza por punto, proximidad y contexto espacial en un mapa interactivo.">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="css/index.css" />
 </head>
@@ -116,9 +115,9 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
-
   <script src="js/index.js"></script>
 
+  <!-- Espejo de totales en topbar -->
   <script>
     (function () {
       const totalN = document.getElementById('groupSummaryTotalN');
@@ -139,6 +138,21 @@
       observer.observe(totalN, { childList: true, subtree: true, characterData: true });
       observer.observe(totalArea, { childList: true, subtree: true, characterData: true });
     })();
+  </script>
+
+  <!-- Fix viewport: fuerza Leaflet a releer el tamaño real del contenedor
+       después de que el CSS pintó y --topbar-h fue calculado por JS.
+       Usa el puntero interno _leaflet_map que Leaflet guarda en el nodo DOM,
+       sin necesidad de exponer variables desde index.js. -->
+  <script>
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        var el = document.getElementById('map');
+        if (el && el._leaflet_map) {
+          el._leaflet_map.invalidateSize(false);
+        }
+      }, 300);
+    });
   </script>
 
   <!-- Contador de visitas -->
