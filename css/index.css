@@ -17,9 +17,6 @@
 
   --layout-max: 1420px;
   --layout-gap: 18px;
-  --banner-col-w: 176px;
-  --banner-frame-w: 140px;
-  --banner-frame-h: 600px;
 }
 
 *,
@@ -198,54 +195,11 @@ select option{
   max-width:var(--layout-max);
   margin:0 auto;
   padding:14px 14px 0;
-  display:flex;
-  align-items:stretch;
-  gap:var(--layout-gap);
   min-height: calc(100dvh - var(--topbar-h) - var(--statsbar-h));
 }
 
-.side-banner{
-  width:var(--banner-col-w);
-  min-width:var(--banner-col-w);
-  max-width:var(--banner-col-w);
-  flex:0 0 var(--banner-col-w);
-
-  display:flex;
-  justify-content:center;
-  align-items:flex-start;
-
-  padding-top:2px;
-  padding-left:0;
-  padding-right:0;
-}
-
-.side-banner iframe{
-  width:var(--banner-frame-w);
-  height:var(--banner-frame-h);
-  min-height:var(--banner-frame-h);
-
-  display:block;
-  flex:0 0 var(--banner-frame-w);
-
-  margin-left:auto;
-  margin-right:auto;
-
-  border:none;
-  background:transparent;
-  overflow:hidden;
-}
-
-.side-banner-left iframe,
-.side-banner-right iframe{
-  position:relative;
-  left:0;
-  right:0;
-}
-
 .map-column{
-  flex:1 1 auto;
-  min-width:0;
-  display:flex;
+  width:100%;
 }
 
 .mapwrap{
@@ -264,6 +218,57 @@ select option{
   height:100%;
   background:#eaf6da;
   z-index:1;
+}
+
+/* =========================
+   ECOSYSTEM CARDS
+========================= */
+
+.ecosystem-card{
+  position:fixed;
+  top:50%;
+  transform:translateY(-50%);
+  width:200px;
+  padding:14px 16px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,0.14);
+  background:rgba(2, 6, 23, 0.78);
+  box-shadow:0 12px 30px rgba(2, 6, 23, 0.24);
+  backdrop-filter: blur(6px);
+  color:#e5e7eb;
+  text-decoration:none;
+  z-index:700;
+}
+
+.ecosystem-card.left{
+  left:16px;
+}
+
+.ecosystem-card.right{
+  right:16px;
+}
+
+.ecosystem-card-title{
+  display:block;
+  font-size:16px;
+  font-weight:700;
+  margin-bottom:8px;
+  letter-spacing:0.01em;
+}
+
+.ecosystem-card-text{
+  display:block;
+  font-size:13px;
+  line-height:1.45;
+  color:rgba(229,231,235,0.90);
+}
+
+.ecosystem-card.geoipt{
+  border-left:3px solid #3b82f6;
+}
+
+.ecosystem-card.geoeva{
+  border-left:3px solid #22c55e;
 }
 
 /* =========================
@@ -379,7 +384,7 @@ select option{
 ========================= */
 
 @media (max-width:1199px){
-  .side-banner{
+  .ecosystem-card{
     display:none;
   }
 
