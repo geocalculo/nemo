@@ -368,17 +368,11 @@ function crearMapa(initialViewport) {
   });
 
   if (initialViewport?.hasIncomingViewport && initialViewport?.type === "bbox") {
-    if (initialViewport?.hasIncomingViewport) {
+    requestAnimationFrame(() => {
       map.fitBounds(initialViewport.bounds, { animate: false });
-    }
+    });
   } else if (initialViewport?.hasIncomingViewport && initialViewport?.type === "coords") {
-    if (initialViewport?.hasIncomingViewport) {
-      map.setView([initialViewport.lat, initialViewport.lon], initialViewport.zoom, { animate: false });
-    }
-  } else {
-    if (!initialViewport?.hasIncomingViewport) {
-      map.setView(HOME_VIEW.center, HOME_VIEW.zoom);
-    }
+    map.setView([initialViewport.lat, initialViewport.lon], initialViewport.zoom, { animate: false });
   }
 
   initMapCursorHint(map);
@@ -422,21 +416,11 @@ function crearMapa(initialViewport) {
   map.on("click", onMapClick);
 
   map.whenReady(() => {
-    setTimeout(() => {
-      syncMapSize();
-      scheduleStatsUpdate();
-    }, 250);
+    syncMapSize();
+    scheduleStatsUpdate();
   });
 
   attachMapResizeSync();
-
-  // FORZAR HOME VIEW SIEMPRE
-  setTimeout(() => {
-    if (!initialViewport || !initialViewport.hasIncomingViewport) {
-      map.setView(HOME_VIEW.center, HOME_VIEW.zoom);
-      console.log("[FIX] Forzando HOME_VIEW");
-    }
-  }, 100);
 
 }
 
@@ -456,7 +440,7 @@ function tryAutoCenterOnUser() {
         radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
       }).addTo(map);
 
-      if (initialViewport?.hasIncomingViewport) {
+      if (!initialViewport?.hasIncomingViewport) {
         map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
       }
       toast("🎯 Centrado en tu ubicación", 1400);
@@ -516,9 +500,7 @@ async function cargarRegiones() {
     }
 
     if (center && isFinite(center[0]) && isFinite(center[1])) {
-      if (initialViewport?.hasIncomingViewport) {
-        map.setView(center, REGION_ZOOM, { animate: true });
-      }
+      map.setView(center, REGION_ZOOM, { animate: true });
       setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
     } else {
@@ -997,9 +979,7 @@ function bindUI() {
 
   if (btnHome) {
     btnHome.addEventListener("click", () => {
-      if (initialViewport?.hasIncomingViewport) {
-        map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true });
-      }
+      map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true });
       toast("🏠 Vista inicial", 1200);
       setTimeout(() => syncMapSize(), 150);
       scheduleStatsUpdate();
@@ -1024,9 +1004,7 @@ function bindUI() {
             radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
           }).addTo(map);
 
-          if (initialViewport?.hasIncomingViewport) {
-            map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
-          }
+          map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
 
           toast("🎯 Ubicación detectada", 1400);
           setTimeout(() => syncMapSize(), 150);
