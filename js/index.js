@@ -413,23 +413,7 @@ function crearMapa(initialViewport) {
     overlayOpacity: 0
   });
 
-    const applyInitialViewport = () => {
-    if (initialViewport?.type === "bbox") {
-      map.fitBounds(initialViewport.bounds, {
-        animate: false,
-        padding: [20, 20],
-        maxZoom: 12
-      });
-    } else if (initialViewport?.type === "coords") {
-      map.setView(
-        [initialViewport.lat, initialViewport.lon],
-        initialViewport.zoom,
-        { animate: false }
-      );
-    } else {
-      map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
-    }
-  };
+
 
   topoBase.once("load", () => {
     requestAnimationFrame(() => {
@@ -1163,8 +1147,8 @@ function initMapCursorHint(mapInstance) {
   );
 
   bindUI();
-  await cargarRegiones();
   crearMapa(initialViewport);
+  await cargarRegiones();
 
   try {
     GROUPS = await loadGroupsMaster(GROUPS_URL);
@@ -1182,4 +1166,14 @@ function initMapCursorHint(mapInstance) {
 
   scheduleStatsUpdate();
   toast("Listo ✅ Mueve/zoom para ver resumen por grupo. Click para abrir MapaOut.", 2200);
+
+  // Forzar vista final en Coquimbo como última acción
+  setTimeout(() => {
+    requestAnimationFrame(() => {
+      if (map) {
+        map.setView([-29.95, -71.34], 8, { animate: false });
+      }
+    });
+  }, 0);
+
 })();
