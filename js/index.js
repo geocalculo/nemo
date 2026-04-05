@@ -1167,14 +1167,7 @@ function initMapCursorHint(mapInstance) {
   scheduleStatsUpdate();
   toast("Listo ✅ Mueve/zoom para ver resumen por grupo. Click para abrir MapaOut.", 2200);
 
-  // Forzar vista final en Coquimbo como última acción
-  setTimeout(() => {
-    requestAnimationFrame(() => {
-      if (map) {
-        map.setView([-29.95, -71.34], 8, { animate: false });
-      }
-    });
-  }, 0);
+
 
 // Última acción: si viene bbox, respetarlo; si no, volver a Coquimbo
 setTimeout(() => {
