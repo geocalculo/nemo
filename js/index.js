@@ -418,11 +418,9 @@ function crearMapa(initialViewport) {
   topoBase.once("load", () => {
     requestAnimationFrame(() => {
       map.invalidateSize(true);
-      applyInitialViewport();
 
       setTimeout(() => {
         map.invalidateSize(true);
-        applyInitialViewport();
         scheduleStatsUpdate();
       }, 180);
     });
