@@ -1176,4 +1176,48 @@ function initMapCursorHint(mapInstance) {
     });
   }, 0);
 
+// Última acción: si viene bbox, respetarlo; si no, volver a Coquimbo
+setTimeout(() => {
+  requestAnimationFrame(() => {
+    if (!map) return;
+
+    const params = new URLSearchParams(window.location.search || "");
+    const bboxRaw = params.get("bbox");
+
+    if (bboxRaw) {
+      const parts = bboxRaw.split(",").map(Number);
+
+      if (
+        parts.length === 4 &&
+        parts.every(Number.isFinite)
+      ) {
+        const [north, east, south, west] = parts;
+
+        const validNesw =
+          north <= 90 && north >= -90 &&
+          south <= 90 && south >= -90 &&
+          east <= 180 && east >= -180 &&
+          west <= 180 && west >= -180 &&
+          north > south &&
+          east > west;
+
+        if (validNesw) {
+          map.fitBounds(
+            L.latLngBounds([south, west], [north, east]),
+            {
+              animate: false,
+              padding: [20, 20],
+              maxZoom: 12
+            }
+          );
+          return;
+        }
+      }
+    }
+
+    // fallback seguro
+    map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
+  });
+}, 0);
+
 })();
