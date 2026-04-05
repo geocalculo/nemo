@@ -452,6 +452,12 @@ function crearMapa(initialViewport) {
   map.whenReady(() => {
     setTimeout(() => {
       map.invalidateSize(true);
+
+      // Si NO viene viewport externo, forzar Coquimbo después del resize
+      if (!initialViewport?.hasIncomingViewport) {
+        map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
+      }
+
       scheduleStatsUpdate();
     }, 250);
   });
@@ -1146,9 +1152,19 @@ function initMapCursorHint(mapInstance) {
 (async function init() {
   initialViewport = parseIncomingViewport();
 
-  crearMapa(initialViewport);
+  if (document.readyState === "loading") {
+    await new Promise((resolve) =>
+      document.addEventListener("DOMContentLoaded", resolve, { once: true })
+    );
+  }
+
+  await new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))
+  );
+
   bindUI();
   await cargarRegiones();
+  crearMapa(initialViewport);
 
   try {
     GROUPS = await loadGroupsMaster(GROUPS_URL);
