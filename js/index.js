@@ -18,6 +18,8 @@ const OUT_STORAGE_KEY = "geonemo_out_v2";
 const MAP_PREF_KEY = "geonemo_map_pref";
 const GROUPS_URL = "capas/grupos.json";
 
+
+
 let map;
 let userMarker = null;
 let clickMarker = null;
@@ -25,6 +27,8 @@ let clickMarker = null;
 let topoBase = null;
 let satOverlay = null;
 let initialViewport = null;
+
+let incomingViewportApplied = false;
 
 function toFiniteNumber(value) {
   const n = Number(value);
@@ -35,7 +39,7 @@ function parseIncomingViewport() {
   const params = new URLSearchParams(window.location.search || "");
 
   const lat = toFiniteNumber(params.get("lat"));
-  const lon = toFiniteNumber(params.get("lon"));
+  const lon = toFiniteNumber(params.get("lon") ?? params.get("lng"));
   const zoom = toFiniteNumber(params.get("zoom"));
 
   const hasValidCoords =
@@ -357,35 +361,52 @@ document.addEventListener("DOMContentLoaded", () => {
   initTopbarAutoHeight();
 });
 
+
+
+
 /* ===========================
    Map init
 =========================== */
-function crearMapa(initialViewport) {
-  map = L.map("map", {
-    zoomControl: true,
-    preferCanvas: true,
-    center: HOME_VIEW.center,
-    zoom: HOME_VIEW.zoom,
-    minZoom: 4,
-    maxZoom: 19
-  });
 
-    // 👇 FORZAR viewport inicial inmediato (CRÍTICO)
-  if (initialViewport?.type === "bbox") {
+function applyInitialViewport() {
+  if (!map) return false;
+
+  if (initialViewport?.type === "bbox" && initialViewport?.bounds) {
     map.fitBounds(initialViewport.bounds, {
       animate: false,
       padding: [20, 20],
       maxZoom: 12
     });
-  } else if (initialViewport?.type === "coords") {
+    incomingViewportApplied = true;
+    return true;
+  }
+
+  if (initialViewport?.type === "coords") {
     map.setView(
       [initialViewport.lat, initialViewport.lon],
       initialViewport.zoom,
       { animate: false }
     );
-  } else {
-    map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
+    incomingViewportApplied = true;
+    return true;
   }
+
+  map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
+  incomingViewportApplied = false;
+  return false;
+}
+
+
+function crearMapa(initialViewport) {
+  map = L.map("map", {
+    zoomControl: true,
+    preferCanvas: true,
+    minZoom: 4,
+    maxZoom: 19
+  });
+
+    // 👇 FORZAR viewport inicial inmediato (CRÍTICO)
+  applyInitialViewport();
 
   initMapCursorHint(map);
 
@@ -434,12 +455,6 @@ function crearMapa(initialViewport) {
   map.whenReady(() => {
     setTimeout(() => {
       map.invalidateSize(true);
-
-      // Si NO viene viewport externo, forzar Coquimbo después del resize
-      if (!initialViewport?.hasIncomingViewport) {
-        map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
-      }
-
       scheduleStatsUpdate();
     }, 250);
   });
@@ -464,9 +479,8 @@ function tryAutoCenterOnUser() {
       }).addTo(map);
 
       // Solo centrar automáticamente si NO viene viewport externo.
-      // Si viene viewport externo, el usuario llegó desde otro portal:
-      // respetar ese viewport y no pisarlo.
-      if (!initialViewport?.hasIncomingViewport) {
+
+      if (!incomingViewportApplied) {
         map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
       }
 
@@ -538,23 +552,7 @@ async function cargarRegiones() {
     }
   });
 
-    // 👇 REAFIRMAR VIEWPORT (estilo GeoIPT)
-  if (!initialViewport?.hasIncomingViewport) {
-    setTimeout(() => {
-      console.log("[GeoNEMO] fallback Coquimbo post-regiones");
 
-      map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
-
-      // importante en tu caso (tienes layout dinámico)
-      if (typeof syncMapSize === "function") {
-        syncMapSize();
-      } else {
-        map.invalidateSize(true);
-      }
-
-      scheduleStatsUpdate?.();
-    }, 120);
-  }
 }
 
 /* ===========================
@@ -1165,50 +1163,5 @@ function initMapCursorHint(mapInstance) {
   scheduleStatsUpdate();
   toast("Listo ✅ Mueve/zoom para ver resumen por grupo. Click para abrir MapaOut.", 2200);
 
-
-
-// Última acción: si viene bbox, respetarlo; si no, volver a Coquimbo
-setTimeout(() => {
-  requestAnimationFrame(() => {
-    if (!map) return;
-
-    const params = new URLSearchParams(window.location.search || "");
-    const bboxRaw = params.get("bbox");
-
-    if (bboxRaw) {
-      const parts = bboxRaw.split(",").map(Number);
-
-      if (
-        parts.length === 4 &&
-        parts.every(Number.isFinite)
-      ) {
-        const [north, east, south, west] = parts;
-
-        const validNesw =
-          north <= 90 && north >= -90 &&
-          south <= 90 && south >= -90 &&
-          east <= 180 && east >= -180 &&
-          west <= 180 && west >= -180 &&
-          north > south &&
-          east > west;
-
-        if (validNesw) {
-          map.fitBounds(
-            L.latLngBounds([south, west], [north, east]),
-            {
-              animate: false,
-              padding: [20, 20],
-              maxZoom: 12
-            }
-          );
-          return;
-        }
-      }
-    }
-
-    // fallback seguro
-    map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
-  });
-}, 0);
 
 })();
