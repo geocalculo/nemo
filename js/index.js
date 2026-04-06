@@ -396,16 +396,43 @@ function applyInitialViewport() {
   return false;
 }
 
+function resolveBootstrapView(viewport) {
+  if (viewport?.type === "coords") {
+    return {
+      center: [viewport.lat, viewport.lon],
+      zoom: viewport.zoom
+    };
+  }
+
+  if (viewport?.type === "bbox" && viewport?.bounds) {
+    const center = viewport.bounds.getCenter();
+    return {
+      center: [center.lat, center.lng],
+      // Zoom conservador para evitar world view (África) antes del fitBounds final.
+      zoom: Math.min(HOME_VIEW.zoom, 6)
+    };
+  }
+
+  return {
+    center: HOME_VIEW.center,
+    zoom: HOME_VIEW.zoom
+  };
+}
+
 
 function crearMapa(initialViewport) {
+  const bootstrap = resolveBootstrapView(initialViewport);
+
   map = L.map("map", {
     zoomControl: true,
     preferCanvas: true,
     minZoom: 4,
-    maxZoom: 19
+    maxZoom: 19,
+    center: bootstrap.center,
+    zoom: bootstrap.zoom
   });
 
-    // 👇 FORZAR viewport inicial inmediato (CRÍTICO)
+  // Reafirma el contrato bbox > coords > HOME sin animación.
   applyInitialViewport();
 
   initMapCursorHint(map);
