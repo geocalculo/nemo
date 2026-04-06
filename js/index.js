@@ -18,7 +18,12 @@ const OUT_STORAGE_KEY = "geonemo_out_v2";
 const MAP_PREF_KEY = "geonemo_map_pref";
 const GROUPS_URL = "capas/grupos.json";
 
+// debug: si true, muestra en consola info detallada de cada paso (carga, stats, click, etc).
+const DEBUG_STEP_MODE = false;
 
+let _debugBootstrap = null;
+let _debugStep = 0;
+// debug: registra info detallada de cada paso, si DEBUG_STEP_MODE=true.
 
 let map;
 let userMarker = null;
@@ -46,7 +51,7 @@ function parseIncomingViewport() {
     lat != null && lon != null && zoom != null &&
     lat >= -90 && lat <= 90 &&
     lon >= -180 && lon <= 180 &&
-    zoom >= 0 && zoom <= 22;
+    zoom > 0 && zoom <= 22;
 
   const bboxRaw = params.get("bbox");
   if (bboxRaw) {
@@ -86,6 +91,7 @@ function parseIncomingViewport() {
 }
 
 let _mapResizeRAF = false;
+
 function scheduleMapInvalidateSize() {
   if (!map || _mapResizeRAF) return;
   _mapResizeRAF = true;
@@ -397,7 +403,13 @@ function applyInitialViewport() {
 }
 
 function resolveBootstrapView(viewport) {
-  if (viewport?.type === "coords") {
+  if (
+    viewport?.type === "coords" &&
+    isFinite(viewport.lat) &&
+    isFinite(viewport.lon) &&
+    isFinite(viewport.zoom) &&
+    viewport.zoom > 0
+  ) {
     return {
       center: [viewport.lat, viewport.lon],
       zoom: viewport.zoom
@@ -405,11 +417,10 @@ function resolveBootstrapView(viewport) {
   }
 
   if (viewport?.type === "bbox" && viewport?.bounds) {
-    const center = viewport.bounds.getCenter();
+    const c = viewport.bounds.getCenter();
     return {
-      center: [center.lat, center.lng],
-      // Zoom conservador para evitar world view (África) antes del fitBounds final.
-      zoom: Math.min(HOME_VIEW.zoom, 6)
+      center: [c.lat, c.lng],
+      zoom: 7
     };
   }
 
@@ -432,10 +443,7 @@ function crearMapa(initialViewport) {
     zoom: bootstrap.zoom
   });
 
-  // Reafirma el contrato bbox > coords > HOME sin animación.
   applyInitialViewport();
-
-  initMapCursorHint(map);
 
   topoBase = L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -449,44 +457,17 @@ function crearMapa(initialViewport) {
     }
   );
 
-
-
   topoBase.addTo(map);
 
-  // En index, solo OSM.
-  // No cargar ni aplicar satélite, overlays ni preferencias de mapa.
   writeMapPref({
     base: "OpenStreetMap",
     overlay: null,
     overlayOpacity: 0
   });
 
-
-
-  topoBase.once("load", () => {
-    requestAnimationFrame(() => {
-      map.invalidateSize(true);
-
-      setTimeout(() => {
-        map.invalidateSize(true);
-        scheduleStatsUpdate();
-      }, 180);
-    });
-  });
-
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
   map.on("click", onMapClick);
-
-  // whenReady: solo sincronizar tamaño y stats, nunca tocar el viewport.
-  map.whenReady(() => {
-    setTimeout(() => {
-      map.invalidateSize(true);
-      scheduleStatsUpdate();
-    }, 250);
-  });
-
-  attachMapResizeSync();
 }
 
 /* ===========================
@@ -1153,6 +1134,8 @@ function initMapCursorHint(mapInstance) {
   mapEl.addEventListener("mousedown", hideHint);
 }
 
+
+
 /* ===========================
    Init
 =========================== */
@@ -1165,11 +1148,13 @@ function initMapCursorHint(mapInstance) {
     );
   }
 
-  await new Promise((resolve) =>
-    requestAnimationFrame(() => requestAnimationFrame(resolve))
-  );
-
   bindUI();
+
+  if (DEBUG_STEP_MODE) {
+    debugLog("Debug listo. Pulsa Siguiente.");
+    return;
+  }
+
   crearMapa(initialViewport);
   await cargarRegiones();
 
@@ -1189,6 +1174,4 @@ function initMapCursorHint(mapInstance) {
 
   scheduleStatsUpdate();
   toast("Listo ✅ Mueve/zoom para ver resumen por grupo. Click para abrir MapaOut.", 2200);
-
-
 })();
