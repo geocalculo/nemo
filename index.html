@@ -35,20 +35,24 @@
   </noscript>
   <!-- End Google Tag Manager (noscript) -->
 
+
+
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand-inline">
         <div class="logo-box">🌿</div>
 
         <div class="brand-text">
-          <h1 class="brand-name">GeoNEMO</h1>
-          <h2 class="brand-tagline">Explora áreas protegidas, restricciones y sensibilidad territorial</h2>
+          <div class="brand-name">GeoNEMO | Áreas Protegidas en Chile</div>
+          <div class="brand-tagline">
+            Áreas protegidas y restricciones territoriales en Chile
+          </div>
         </div>
       </div>
 
       <div class="topbar-right">
         <div class="topbar-kpi">
-          <span>📊 Total:</span>
+          <span>📊 En vista actual:</span>
           <strong id="groupSummaryTotalN_top">—</strong>
           <span>sitios</span>
           <span>·</span>
@@ -140,10 +144,7 @@
     })();
   </script>
 
-  <!-- Fix viewport: fuerza Leaflet a releer el tamaño real del contenedor
-       después de que el CSS pintó y --topbar-h fue calculado por JS.
-       Usa el puntero interno _leaflet_map que Leaflet guarda en el nodo DOM,
-       sin necesidad de exponer variables desde index.js. -->
+  <!-- Fix viewport -->
   <script>
     window.addEventListener('load', function () {
       setTimeout(function () {
@@ -184,8 +185,6 @@
       GeoEVA.cl
     </a>
   </div>
-
-
 
 </body>
 </html>

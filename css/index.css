@@ -506,3 +506,86 @@ select option{
   height: 256px !important;
 }
 
+/* =========================
+   MOBILE TUNING GEONEMO
+========================= */
+@media (max-width: 767px) {
+  .topbar {
+    padding: 6px 8px;
+  }
+
+  .topbar-inner {
+    gap: 6px;
+  }
+
+  .brand-inline {
+    gap: 8px;
+  }
+
+  .logo-box {
+    width: 30px;
+    height: 30px;
+    font-size: 15px;
+    border-radius: 10px;
+  }
+
+  .brand-name {
+    font-size: 14px;
+    line-height: 1.05;
+  }
+
+  /* Ocultar tagline en mobile */
+  .brand-tagline {
+    display: none;
+  }
+
+  .topbar-right {
+    gap: 6px;
+  }
+
+  .controls-inline {
+    width: 100%;
+  }
+
+  select {
+    height: 36px;
+    padding: 0 10px;
+    font-size: 13px;
+    border-radius: 10px;
+  }
+
+  .topbar-kpi {
+    height: 34px;
+    padding: 0 10px;
+    font-size: 12px;
+    gap: 5px;
+    border-radius: 999px;
+  }
+
+  .layout-home {
+    padding: 8px 8px 0;
+  }
+
+  .mapwrap {
+    border-radius: 12px;
+  }
+
+  /* Quitar contador en mobile */
+  #visitor-counter {
+    display: none !important;
+  }
+
+  /* Barra inferior un poco más ligera */
+  #ecosystem-bar {
+    height: 48px;
+  }
+
+  #ecosystem-bar a {
+    line-height: 48px;
+    font-size: 12px;
+  }
+
+  .leaflet-bottom {
+    bottom: 52px !important;
+  }
+}
