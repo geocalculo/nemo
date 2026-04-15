@@ -137,6 +137,17 @@ function attachMapResizeSync() {
 
 const fileState = new Map();
 let GROUPS = [];
+const SEARCH_MAX_RESULTS = 12;
+const SEARCH_TEXT_KEYS = [
+  "nombre", "name", "label", "sitio", "denominacion",
+  "categoria", "tipo", "subtipo", "descripcion"
+];
+
+let searchState = {
+  entries: [],
+  dirty: true,
+  highlightLayer: null
+};
 
 /* ===========================
    UI helpers
@@ -650,6 +661,57 @@ function resolveGroupFileUrl(groupUrl, filePath){
   return joinPath(baseDir, f);
 }
 
+function normalizeSearchText(value){
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function firstNonEmpty(props, keys){
+  if (!props || typeof props !== "object") return "";
+  for (const key of keys){
+    const val = props[key];
+    if (val == null) continue;
+    const txt = String(val).trim();
+    if (txt) return txt;
+  }
+  return "";
+}
+
+function buildSearchEntry({ group, fileUrl, feature, bbox }){
+  const props = feature?.properties || {};
+  const geom = feature?.geometry || {};
+  if (!geom?.type) return null;
+
+  const displayName = firstNonEmpty(props, ["nombre", "name", "label", "sitio", "denominacion"]) || "Sin nombre";
+  const category = firstNonEmpty(props, ["categoria", "tipo", "subtipo"]) || (group?.group_name || group?.group_id || "Sin categoría");
+  const description = firstNonEmpty(props, ["descripcion"]);
+
+  const allTexts = [];
+  for (const k of SEARCH_TEXT_KEYS){
+    const v = props?.[k];
+    if (v == null) continue;
+    const t = String(v).trim();
+    if (t) allTexts.push(t);
+  }
+  allTexts.push(group?.group_name || "", group?.group_id || "");
+
+  return {
+    displayName,
+    category,
+    description,
+    groupName: group?.group_name || group?.group_id || "",
+    groupId: group?.group_id || "",
+    fileUrl,
+    geometryType: geom.type,
+    bbox: Array.isArray(bbox) ? bbox : null,
+    feature,
+    searchText: normalizeSearchText(allTexts.join(" · "))
+  };
+}
+
 /* ===========================
    Carga MASTER grupos.json
 =========================== */
@@ -687,7 +749,7 @@ async function loadGroupsMaster(url){
    Load GeoJSON por ARCHIVO + index bbox/area
 =========================== */
 async function ensureFileLoaded(fileUrl){
-  const st = fileState.get(fileUrl) || { loaded:false, featuresIndex:[] };
+  const st = fileState.get(fileUrl) || { loaded:false, featuresIndex:[], rawFeatures:[] };
   if (st.loaded) return st;
 
   if (!assertTurfReady()) return st;
@@ -699,21 +761,27 @@ async function ensureFileLoaded(fileUrl){
   const feats = gj.features || [];
 
   const idx = [];
+  const rawFeatures = [];
   for (const f of feats){
-    const t = f?.geometry?.type;
-    if (t === "Polygon" || t === "MultiPolygon"){
-      try{
-        const bb = turf.bbox(f);
+    if (!f?.geometry?.type) continue;
+    try{
+      const bb = turf.bbox(f);
+      rawFeatures.push({ feature:f, bbox:bb });
+
+      const t = f.geometry.type;
+      if (t === "Polygon" || t === "MultiPolygon"){
         let areaM2 = NaN;
         try{ areaM2 = turf.area(f); } catch(_) {}
         idx.push({ feature:f, bbox:bb, areaM2 });
-      } catch(_){}
-    }
+      }
+    } catch(_){}
   }
 
   st.loaded = true;
   st.featuresIndex = idx;
+  st.rawFeatures = rawFeatures;
   fileState.set(fileUrl, st);
+  searchState.dirty = true;
 
   return st;
 }
@@ -886,6 +954,189 @@ async function updateBboxStatsByGroup() {
       protected_area_m2: grandAreaM2,
       protected_area_fmt: fmtArea(grandAreaM2),
     },
+  });
+}
+
+function rebuildSearchIndexFromMemory(){
+  const activeGroups = (GROUPS || []).filter((g) => g && g.enabled !== false);
+  if (!activeGroups.length) {
+    searchState.entries = [];
+    searchState.dirty = false;
+    return;
+  }
+
+  const groupByFile = new Map();
+  for (const g of activeGroups){
+    for (const fileUrl of (g.files || [])){
+      if (!groupByFile.has(fileUrl)) groupByFile.set(fileUrl, g);
+    }
+  }
+
+  const entries = [];
+  for (const [fileUrl, group] of groupByFile){
+    const st = fileState.get(fileUrl);
+    if (!st?.loaded) continue;
+    for (const it of (st.rawFeatures || [])){
+      const entry = buildSearchEntry({
+        group,
+        fileUrl,
+        feature: it.feature,
+        bbox: it.bbox
+      });
+      if (entry) entries.push(entry);
+    }
+  }
+
+  searchState.entries = entries;
+  searchState.dirty = false;
+}
+
+function clearSearchHighlight(){
+  if (searchState.highlightLayer && map) {
+    map.removeLayer(searchState.highlightLayer);
+  }
+  searchState.highlightLayer = null;
+}
+
+function highlightSearchFeature(feature){
+  if (!map || !feature) return;
+  clearSearchHighlight();
+
+  const layer = L.geoJSON(feature, {
+    style: {
+      color: "#16a34a",
+      weight: 4,
+      opacity: 0.95,
+      fillColor: "#bef264",
+      fillOpacity: 0.25
+    },
+    pointToLayer: (_, latlng) => L.circleMarker(latlng, {
+      radius: 9,
+      color: "#16a34a",
+      weight: 3,
+      fillColor: "#bef264",
+      fillOpacity: 0.45
+    })
+  }).addTo(map);
+
+  searchState.highlightLayer = layer;
+  setTimeout(() => {
+    if (searchState.highlightLayer === layer) {
+      clearSearchHighlight();
+    }
+  }, 2200);
+}
+
+function focusSearchResult(entry){
+  if (!map || !entry?.feature?.geometry?.type) return;
+
+  let bb = entry.bbox;
+  try {
+    if (!bb) bb = turf.bbox(entry.feature);
+  } catch (_) {
+    bb = null;
+  }
+  if (!bb) return;
+
+  const t = entry.feature.geometry.type;
+  if (t === "Point" || t === "MultiPoint"){
+    const lat = (bb[1] + bb[3]) / 2;
+    const lng = (bb[0] + bb[2]) / 2;
+    map.setView([lat, lng], Math.max(map.getZoom(), 12), { animate: true });
+  } else {
+    map.fitBounds([[bb[1], bb[0]], [bb[3], bb[2]]], {
+      padding: [30, 30],
+      maxZoom: 13,
+      animate: true
+    });
+  }
+
+  highlightSearchFeature(entry.feature);
+}
+
+function runInMemorySearch(rawQuery){
+  const q = normalizeSearchText(rawQuery);
+  if (!q) return [];
+  if (searchState.dirty) rebuildSearchIndexFromMemory();
+  if (!searchState.entries.length) return [];
+
+  const starts = [];
+  const contains = [];
+  for (const entry of searchState.entries){
+    const txt = entry.searchText || "";
+    if (!txt.includes(q)) continue;
+    if (txt.startsWith(q)) starts.push(entry);
+    else contains.push(entry);
+  }
+
+  return starts.concat(contains).slice(0, SEARCH_MAX_RESULTS);
+}
+
+function bindSearchUI(){
+  const input = document.getElementById("mapSearchInput");
+  const list = document.getElementById("mapSearchResults");
+  if (!input || !list) return;
+
+  const hideResults = () => {
+    list.classList.remove("show");
+    list.innerHTML = "";
+  };
+
+  const renderResults = (results) => {
+    list.innerHTML = "";
+    if (!results.length) {
+      const li = document.createElement("li");
+      li.innerHTML = `<button type="button" class="map-search-result-btn" disabled>
+        <span class="map-search-result-title">Sin coincidencias</span>
+        <span class="map-search-result-meta">Prueba con otro término</span>
+      </button>`;
+      list.appendChild(li);
+      list.classList.add("show");
+      return;
+    }
+
+    for (const r of results){
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "map-search-result-btn";
+      const title = document.createElement("span");
+      title.className = "map-search-result-title";
+      title.textContent = r.displayName;
+      const meta = document.createElement("span");
+      meta.className = "map-search-result-meta";
+      meta.textContent = `${r.category} · ${r.groupName}`;
+      button.appendChild(title);
+      button.appendChild(meta);
+      button.addEventListener("click", () => {
+        focusSearchResult(r);
+        hideResults();
+        input.value = r.displayName;
+      });
+      li.appendChild(button);
+      list.appendChild(li);
+    }
+    list.classList.add("show");
+  };
+
+  input.addEventListener("input", () => {
+    const q = input.value || "";
+    if (!q.trim()) {
+      hideResults();
+      return;
+    }
+    renderResults(runInMemorySearch(q));
+  });
+
+  input.addEventListener("focus", () => {
+    if (input.value.trim()) renderResults(runInMemorySearch(input.value));
+  });
+
+  document.addEventListener("click", (ev) => {
+    const target = ev.target;
+    if (!target || (target !== input && !list.contains(target))) {
+      hideResults();
+    }
   });
 }
 
@@ -1182,6 +1433,7 @@ function initMapCursorHint(mapInstance) {
   }
 
   bindUI();
+  bindSearchUI();
 
   if (DEBUG_STEP_MODE) {
     debugLog("Debug listo. Pulsa Siguiente.");
@@ -1193,6 +1445,7 @@ function initMapCursorHint(mapInstance) {
 
   try {
     GROUPS = await loadGroupsMaster(GROUPS_URL);
+    searchState.dirty = true;
     if (!GROUPS.length) toast("⚠️ No hay grupos cargados", 2600);
     else toast(`✅ Grupos: ${GROUPS.map(g => g.group_name).join(", ")}`, 1600);
   } catch (e) {

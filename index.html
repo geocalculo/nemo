@@ -93,6 +93,16 @@
       <section class="map-column">
         <section class="mapwrap">
           <div id="map"></div>
+          <div id="mapSearch" class="map-search" role="search">
+            <label for="mapSearchInput" class="sr-only">Buscar sitios</label>
+            <input
+              id="mapSearchInput"
+              type="search"
+              autocomplete="off"
+              placeholder="Buscar sitio protegido, humedal, salar, parque..."
+            />
+            <ul id="mapSearchResults" class="map-search-results" aria-live="polite"></ul>
+          </div>
           <div id="toast" class="toast" aria-live="polite"></div>
         </section>
       </section>
