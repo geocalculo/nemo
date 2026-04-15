@@ -680,23 +680,149 @@ function firstNonEmpty(props, keys){
   return "";
 }
 
-function buildSearchEntry({ group, fileUrl, feature, bbox }){
+function buildSearchEntry({ group, fileUrl, feature, bbox }) {
   const props = feature?.properties || {};
   const geom = feature?.geometry || {};
   if (!geom?.type) return null;
 
-  const displayName = firstNonEmpty(props, ["nombre", "name", "label", "sitio", "denominacion"]) || "Sin nombre";
-  const category = firstNonEmpty(props, ["categoria", "tipo", "subtipo"]) || (group?.group_name || group?.group_id || "Sin categoría");
-  const description = firstNonEmpty(props, ["descripcion"]);
+  const GROUP_DISPLAY_FIELD = {
+    SNASPE: "NOMBRE_TOT"
+  };
 
-  const allTexts = [];
-  for (const k of SEARCH_TEXT_KEYS){
-    const v = props?.[k];
-    if (v == null) continue;
-    const t = String(v).trim();
-    if (t) allTexts.push(t);
+  const preferredNameKeys = [
+    "nombre",
+    "name",
+    "label",
+    "sitio",
+    "denominacion",
+    "nombre_oficial",
+    "nom_oficial",
+    "nom_sitio",
+    "designacion",
+    "designación",
+    "area_name",
+    "nombre_area",
+    "NOMBRE",
+    "NAME",
+    "LABEL",
+    "SITIO",
+    "DENOMINACION",
+    "NOMBRE_OFICIAL",
+    "NOM_OFICIAL",
+    "NOM_SITIO",
+    "DESIGNACION",
+    "AREA_NAME",
+    "NOMBRE_AREA"
+  ];
+
+  const preferredCategoryKeys = [
+    "categoria",
+    "tipo",
+    "subtipo",
+    "figura",
+    "clase",
+    "CATEGORIA",
+    "TIPO",
+    "SUBTIPO",
+    "FIGURA",
+    "CLASE",
+    "Categoria",
+    "Tipo",
+    "Subtipo",
+    "Figura",
+    "Clase"
+  ];
+
+  const preferredDescriptionKeys = [
+    "descripcion",
+    "detalle",
+    "observacion",
+    "comentario",
+    "DESCRIPCION",
+    "DETALLE",
+    "OBSERVACION",
+    "COMENTARIO",
+    "Descripcion",
+    "Detalle",
+    "Observacion",
+    "Comentario"
+  ];
+
+  // -----------------------------
+  // displayName: regla por grupo + heurística
+  // -----------------------------
+  let displayName = "";
+
+  const preferredField = GROUP_DISPLAY_FIELD[group?.group_id];
+  if (preferredField && props?.[preferredField] != null) {
+    displayName = String(props[preferredField]).trim();
   }
-  allTexts.push(group?.group_name || "", group?.group_id || "");
+
+  if (!displayName) {
+    displayName = firstNonEmpty(props, preferredNameKeys);
+  }
+
+  if (!displayName) {
+    for (const [key, value] of Object.entries(props)) {
+      if (value == null) continue;
+      const v = String(value).trim();
+      if (!v) continue;
+
+      const k = normalizeSearchText(key);
+      if (
+        k.includes("nombre") ||
+        k.includes("name") ||
+        k.includes("sitio") ||
+        k.includes("denomin") ||
+        k.includes("design") ||
+        k.includes("area")
+      ) {
+        displayName = v;
+        break;
+      }
+    }
+  }
+
+  if (!displayName) {
+    displayName = group?.group_name || group?.group_id || "Sin nombre";
+  }
+
+  // -----------------------------
+  // category
+  // -----------------------------
+  let category = firstNonEmpty(props, preferredCategoryKeys);
+
+  if (!category) {
+    if (group?.group_id === "SNASPE") category = "SNASPE";
+    else category = group?.group_name || group?.group_id || "Sin categoría";
+  }
+
+  // -----------------------------
+  // description
+  // -----------------------------
+  const description = firstNonEmpty(props, preferredDescriptionKeys);
+
+  // -----------------------------
+  // searchText: TODOS los campos útiles
+  // -----------------------------
+  const allTexts = [];
+
+  for (const [key, value] of Object.entries(props)) {
+    if (value == null) continue;
+
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      const t = String(value).trim();
+      if (t) allTexts.push(t);
+    }
+  }
+
+  allTexts.push(
+    displayName,
+    category,
+    description || "",
+    group?.group_name || "",
+    group?.group_id || ""
+  );
 
   return {
     displayName,
@@ -1054,22 +1180,76 @@ function focusSearchResult(entry){
   highlightSearchFeature(entry.feature);
 }
 
-function runInMemorySearch(rawQuery){
+function runInMemorySearch(rawQuery) {
   const q = normalizeSearchText(rawQuery);
   if (!q) return [];
+
   if (searchState.dirty) rebuildSearchIndexFromMemory();
   if (!searchState.entries.length) return [];
 
+  const queryVariants = new Set([q]);
+
+  // Variantes simples singular/plural
+  if (q.length > 3) {
+    if (q.endsWith("es")) queryVariants.add(q.slice(0, -2));
+    if (q.endsWith("s")) queryVariants.add(q.slice(0, -1));
+  }
+
   const starts = [];
+  const wordMatches = [];
   const contains = [];
-  for (const entry of searchState.entries){
-    const txt = entry.searchText || "";
-    if (!txt.includes(q)) continue;
-    if (txt.startsWith(q)) starts.push(entry);
+
+  for (const entry of searchState.entries) {
+    const txt = normalizeSearchText(entry.searchText || "");
+    if (!txt) continue;
+
+    const words = txt.split(/\s+/).filter(Boolean);
+
+    let matched = false;
+    let matchedAsStart = false;
+    let matchedAsWord = false;
+
+    for (const variant of queryVariants) {
+      if (!variant) continue;
+
+      if (txt.startsWith(variant)) {
+        matched = true;
+        matchedAsStart = true;
+        break;
+      }
+
+      if (words.some((w) => w.startsWith(variant) || w.includes(variant))) {
+        matched = true;
+        matchedAsWord = true;
+        continue;
+      }
+
+      if (txt.includes(variant)) {
+        matched = true;
+      }
+    }
+
+    if (!matched) continue;
+
+    if (matchedAsStart) starts.push(entry);
+    else if (matchedAsWord) wordMatches.push(entry);
     else contains.push(entry);
   }
 
-  return starts.concat(contains).slice(0, SEARCH_MAX_RESULTS);
+  const results = starts.concat(wordMatches, contains);
+
+// Deduplicación
+const seen = new Set();
+const unique = [];
+
+for (const r of results) {
+  const key = `${r.groupId}::${normalizeSearchText(r.displayName)}`;
+  if (seen.has(key)) continue;
+  seen.add(key);
+  unique.push(r);
+}
+
+return unique.slice(0, SEARCH_MAX_RESULTS);
 }
 
 function bindSearchUI(){

@@ -320,7 +320,8 @@ select option{
 .map-search{
   position:absolute;
   top:12px;
-  left:12px;
+  left:50%;
+  transform:translateX(-50%);
   z-index:60;
   width:min(460px, calc(100% - 24px));
 }
