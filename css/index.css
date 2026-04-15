@@ -393,6 +393,24 @@ select option{
   margin-top:2px;
 }
 
+@media (max-width: 768px){
+  .map-search{
+    position: absolute;
+    top: 10px;
+    left: 58px;
+    width: calc(100% - 120px);
+    max-width: 230px;
+    transform: none;
+    z-index: 60;
+  }
+
+  .map-search input{
+    height: 38px;
+    font-size: 13px;
+    padding: 0 10px;
+  }
+}
+
 /* =========================
    MAP HINT
 ========================= */
