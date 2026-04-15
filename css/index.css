@@ -389,6 +389,28 @@ select option{
   background:#eaf6da;
 }
 
+.geonemo-locate-control{
+  margin-top: 8px;
+}
+
+.geonemo-locate-btn{
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: #fff;
+  color: #0f172a;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+}
+
+.geonemo-locate-btn:hover{
+  background: #f8fafc;
+}
+
 /* =========================
    RESPONSIVE
 ========================= */

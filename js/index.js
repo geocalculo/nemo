@@ -35,6 +35,8 @@ let initialViewport = null;
 
 let incomingViewportApplied = false;
 
+const USER_LOCATE_ZOOM = 13;
+
 function toFiniteNumber(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
@@ -458,6 +460,7 @@ function crearMapa(initialViewport) {
   );
 
   topoBase.addTo(map);
+  addMyLocationControl();
 
   writeMapPref({
     base: "OpenStreetMap",
@@ -468,6 +471,62 @@ function crearMapa(initialViewport) {
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
   map.on("click", onMapClick);
+}
+
+function centerMapOnUserPosition() {
+  if (!navigator.geolocation || !map) {
+    toast("⚠️ Geolocalización no soportada", 2400);
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+
+      if (userMarker) map.removeLayer(userMarker);
+      userMarker = L.circleMarker([lat, lng], {
+        radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
+      }).addTo(map);
+
+      map.setView([lat, lng], USER_LOCATE_ZOOM, { animate: true });
+
+      toast("🎯 Ubicación detectada", 1400);
+      setTimeout(() => syncMapSize(), 150);
+      scheduleStatsUpdate();
+    },
+    (err) => {
+      console.warn("[GeoNEMO] No pude obtener ubicación:", err);
+      toast("⚠️ No pude obtener tu ubicación", 2600);
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+  );
+}
+
+function addMyLocationControl() {
+  if (!map || !L?.Control) return;
+
+  const MyLocationControl = L.Control.extend({
+    options: { position: "topleft" },
+    onAdd() {
+      const container = L.DomUtil.create("div", "leaflet-bar geonemo-locate-control");
+      const button = L.DomUtil.create("button", "geonemo-locate-btn", container);
+      button.type = "button";
+      button.title = "Mi ubicación";
+      button.setAttribute("aria-label", "Mi ubicación");
+      button.textContent = "📍";
+
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.on(button, "click", (ev) => {
+        L.DomEvent.preventDefault(ev);
+        centerMapOnUserPosition();
+      });
+
+      return container;
+    }
+  });
+
+  map.addControl(new MyLocationControl());
 }
 
 /* ===========================
@@ -1044,33 +1103,7 @@ function bindUI() {
   if (btnOut) btnOut.addEventListener("click", () => openOut());
 
   if (btnGPS) {
-    btnGPS.addEventListener("click", () => {
-      if (!navigator.geolocation) {
-        toast("⚠️ Geolocalización no soportada", 2400);
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-
-          if (userMarker) map.removeLayer(userMarker);
-          userMarker = L.circleMarker([lat, lng], {
-            radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
-          }).addTo(map);
-
-          // El usuario pulsó GPS explícitamente → siempre centrar,
-          // sin importar si hay viewport externo.
-          map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
-
-          toast("🎯 Ubicación detectada", 1400);
-          setTimeout(() => syncMapSize(), 150);
-          scheduleStatsUpdate();
-        },
-        () => toast("⚠️ No pude obtener tu ubicación", 2600),
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-      );
-    });
+    btnGPS.addEventListener("click", centerMapOnUserPosition);
   }
 
   if (btnClear) btnClear.addEventListener("click", clearPoint);
