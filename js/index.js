@@ -30,6 +30,7 @@ let _debugStep = 0;
 let map;
 let userMarker = null;
 let clickMarker = null;
+let hasShownMapHintFade = false;
 
 let topoBase = null;
 let satOverlay = null;
@@ -622,6 +623,31 @@ function resolveBootstrapView(viewport) {
   };
 }
 
+function showMapHintFade() {
+  if (hasShownMapHintFade) return;
+
+  const hint = document.getElementById("map-hint-fade");
+  if (!hint) return;
+
+  hasShownMapHintFade = true;
+
+  const showDelayMs = 2000;
+  const visibleTimeMs = 1800;
+
+  setTimeout(() => {
+    hint.classList.add("is-visible");
+
+    setTimeout(() => {
+      hint.classList.remove("is-visible");
+    }, visibleTimeMs);
+  }, showDelayMs);
+}
+
+function initMapHintFade(mapInstance) {
+  if (!mapInstance) return;
+  mapInstance.whenReady(showMapHintFade);
+}
+
 
 function crearMapa(initialViewport) {
   const bootstrap = resolveBootstrapView(initialViewport);
@@ -634,6 +660,7 @@ function crearMapa(initialViewport) {
     center: bootstrap.center,
     zoom: bootstrap.zoom
   });
+  initMapHintFade(map);
 
   applyInitialViewport();
 
