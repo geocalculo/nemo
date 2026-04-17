@@ -10,6 +10,8 @@
 
 const REGIONES_URL = "data/regiones.json";
 const HOME_VIEW = { center: [-29.95, -71.25], zoom: 7 };
+const VIEWPORT_STORAGE_KEY = "ms:lastViewport:geonemo";
+const VIEWPORT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const ENTRY_ZOOM = 10;
 const REGION_ZOOM = 10;
@@ -34,6 +36,7 @@ let satOverlay = null;
 let initialViewport = null;
 
 let incomingViewportApplied = false;
+let userViewportInteractionArmed = false;
 
 const USER_LOCATE_ZOOM = 13;
 
@@ -88,6 +91,150 @@ function parseIncomingViewport() {
       zoom
     };
   }
+
+  return { hasIncomingViewport: false, type: "default" };
+}
+
+function isValidLatLng(lat, lng) {
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= -90 && lat <= 90 &&
+    lng >= -180 && lng <= 180;
+}
+
+function isValidStoredBBox(bbox) {
+  if (!bbox || typeof bbox !== "object") return false;
+  const north = toFiniteNumber(bbox.north);
+  const east = toFiniteNumber(bbox.east);
+  const south = toFiniteNumber(bbox.south);
+  const west = toFiniteNumber(bbox.west);
+  if (![north, east, south, west].every((v) => v != null)) return false;
+  if (!isValidLatLng(north, east) || !isValidLatLng(south, west)) return false;
+  return north > south && east > west;
+}
+
+function persistCurrentViewport(mapInstance) {
+  if (!mapInstance) return;
+  try {
+    const bounds = mapInstance.getBounds();
+    const payload = {
+      bbox: {
+        north: bounds.getNorth(),
+        east: bounds.getEast(),
+        south: bounds.getSouth(),
+        west: bounds.getWest()
+      },
+      timestamp: Date.now()
+    };
+    localStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(payload));
+  } catch (_) {}
+}
+
+function readStoredViewport() {
+  try {
+    const raw = localStorage.getItem(VIEWPORT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const timestamp = toFiniteNumber(parsed?.timestamp);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) {
+      localStorage.removeItem(VIEWPORT_STORAGE_KEY);
+      return null;
+    }
+    if ((Date.now() - timestamp) > VIEWPORT_TTL_MS) {
+      localStorage.removeItem(VIEWPORT_STORAGE_KEY);
+      return null;
+    }
+    if (!isValidStoredBBox(parsed?.bbox)) {
+      localStorage.removeItem(VIEWPORT_STORAGE_KEY);
+      return null;
+    }
+    const { north, east, south, west } = parsed.bbox;
+    return {
+      type: "bbox",
+      bounds: L.latLngBounds([south, west], [north, east])
+    };
+  } catch (_) {
+    try { localStorage.removeItem(VIEWPORT_STORAGE_KEY); } catch (__){}
+    return null;
+  }
+}
+
+function armViewportPersistenceOnUserInteraction(mapInstance) {
+  if (!mapInstance) return;
+  const mapContainer = mapInstance.getContainer();
+  if (!mapContainer) return;
+
+  mapContainer.addEventListener("pointerdown", () => {
+    userViewportInteractionArmed = true;
+  }, { passive: true });
+
+  mapContainer.addEventListener("wheel", () => {
+    userViewportInteractionArmed = true;
+  }, { passive: true });
+
+  mapContainer.addEventListener("touchstart", () => {
+    userViewportInteractionArmed = true;
+  }, { passive: true });
+}
+
+async function getFrictionlessInitialCoords() {
+  if (!navigator?.geolocation) return null;
+
+  try {
+    if (!navigator.permissions?.query) return null;
+    const permissionState = await navigator.permissions.query({ name: "geolocation" });
+    if (permissionState?.state !== "granted") return null;
+
+    const pos = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 3000,
+        maximumAge: 30000
+      });
+    });
+
+    const lat = toFiniteNumber(pos?.coords?.latitude);
+    const lon = toFiniteNumber(pos?.coords?.longitude);
+    if (!isValidLatLng(lat, lon)) return null;
+    return { type: "coords", lat, lon, zoom: ENTRY_ZOOM };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function getIpBasedInitialCoords() {
+  let timeoutId = null;
+  try {
+    const controller = new AbortController();
+    timeoutId = window.setTimeout(() => controller.abort(), 3000);
+    const res = await fetch("https://ipapi.co/json/", {
+      signal: controller.signal,
+      cache: "no-store"
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const lat = toFiniteNumber(data?.latitude ?? data?.lat);
+    const lon = toFiniteNumber(data?.longitude ?? data?.lon ?? data?.lng);
+    if (!isValidLatLng(lat, lon)) return null;
+    return { type: "coords", lat, lon, zoom: ENTRY_ZOOM };
+  } catch (_) {
+    return null;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function resolveInitialViewport() {
+  const incoming = parseIncomingViewport();
+  if (incoming?.hasIncomingViewport) return incoming;
+
+  const stored = readStoredViewport();
+  if (stored) return stored;
+
+  const gpsGranted = await getFrictionlessInitialCoords();
+  if (gpsGranted) return gpsGranted;
+
+  const ipBased = await getIpBasedInitialCoords();
+  if (ipBased) return ipBased;
 
   return { hasIncomingViewport: false, type: "default" };
 }
@@ -390,13 +537,17 @@ document.addEventListener("DOMContentLoaded", () => {
 function applyInitialViewport() {
   if (!map) return false;
 
+  if (applyIncomingViewport(map)) {
+    return true;
+  }
+
   if (initialViewport?.type === "bbox" && initialViewport?.bounds) {
     map.fitBounds(initialViewport.bounds, {
       animate: false,
       padding: [20, 20],
       maxZoom: 12
     });
-    incomingViewportApplied = true;
+    incomingViewportApplied = false;
     return true;
   }
 
@@ -406,12 +557,40 @@ function applyInitialViewport() {
       initialViewport.zoom,
       { animate: false }
     );
-    incomingViewportApplied = true;
+    incomingViewportApplied = false;
     return true;
   }
 
   map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
   incomingViewportApplied = false;
+  return false;
+}
+
+function applyIncomingViewport(mapInstance) {
+  if (!mapInstance || !initialViewport?.hasIncomingViewport) return false;
+
+  if (initialViewport?.type === "bbox" && initialViewport?.bounds) {
+    mapInstance.fitBounds(initialViewport.bounds, {
+      animate: false,
+      padding: [20, 20],
+      maxZoom: 12
+    });
+    incomingViewportApplied = true;
+    persistCurrentViewport(mapInstance);
+    return true;
+  }
+
+  if (initialViewport?.type === "coords") {
+    mapInstance.setView(
+      [initialViewport.lat, initialViewport.lon],
+      initialViewport.zoom,
+      { animate: false }
+    );
+    incomingViewportApplied = true;
+    persistCurrentViewport(mapInstance);
+    return true;
+  }
+
   return false;
 }
 
@@ -482,6 +661,13 @@ function crearMapa(initialViewport) {
   map.on("moveend", scheduleStatsUpdate);
   map.on("zoomend", scheduleStatsUpdate);
   map.on("click", onMapClick);
+
+  armViewportPersistenceOnUserInteraction(map);
+  const debouncedPersistViewport = debounce(() => {
+    if (!userViewportInteractionArmed) return;
+    persistCurrentViewport(map);
+  }, 500);
+  map.on("moveend", debouncedPersistViewport);
 }
 
 function centerMapOnUserPosition() {
@@ -501,6 +687,7 @@ function centerMapOnUserPosition() {
       }).addTo(map);
 
       map.setView([lat, lng], USER_LOCATE_ZOOM, { animate: true });
+      persistCurrentViewport(map);
 
       toast("🎯 Ubicación detectada", 1400);
       setTimeout(() => syncMapSize(), 150);
@@ -1604,7 +1791,7 @@ function initMapCursorHint(mapInstance) {
    Init
 =========================== */
 (async function init() {
-  initialViewport = parseIncomingViewport();
+  initialViewport = await resolveInitialViewport();
 
   if (document.readyState === "loading") {
     await new Promise((resolve) =>
