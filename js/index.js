@@ -31,6 +31,9 @@ let map;
 let userMarker = null;
 let clickMarker = null;
 let hasShownMapHintFade = false;
+let mapHintFadeFallbackTimer = null;
+let mapHintFadeAutoHideTimer = null;
+let mapHintFadeInteractionBound = false;
 
 let topoBase = null;
 let satOverlay = null;
@@ -630,22 +633,74 @@ function showMapHintFade() {
   if (!hint) return;
 
   hasShownMapHintFade = true;
+  if (mapHintFadeFallbackTimer) {
+    clearTimeout(mapHintFadeFallbackTimer);
+    mapHintFadeFallbackTimer = null;
+  }
 
-  const showDelayMs = 2000;
-  const visibleTimeMs = 1800;
+  hint.classList.add("is-visible");
 
-  setTimeout(() => {
-    hint.classList.add("is-visible");
-
-    setTimeout(() => {
-      hint.classList.remove("is-visible");
-    }, visibleTimeMs);
-  }, showDelayMs);
+  mapHintFadeAutoHideTimer = setTimeout(() => {
+    hideMapHintFade();
+  }, 2600);
 }
 
-function initMapHintFade(mapInstance) {
+function hideMapHintFade() {
+  const hint = document.getElementById("map-hint-fade");
+  if (!hint) return;
+  hint.classList.remove("is-visible");
+
+  if (mapHintFadeAutoHideTimer) {
+    clearTimeout(mapHintFadeAutoHideTimer);
+    mapHintFadeAutoHideTimer = null;
+  }
+}
+
+function bindMapHintDismissOnInteraction(mapInstance) {
+  if (!mapInstance || mapHintFadeInteractionBound) return;
+  mapHintFadeInteractionBound = true;
+
+  const dismissHint = () => {
+    if (!hasShownMapHintFade) return;
+    hideMapHintFade();
+  };
+
+  mapInstance.on("click", dismissHint);
+  mapInstance.on("movestart", dismissHint);
+  mapInstance.on("zoomstart", dismissHint);
+  mapInstance.on("dragstart", dismissHint);
+
+  const mapContainer = mapInstance.getContainer();
+  if (!mapContainer) return;
+
+  mapContainer.addEventListener("wheel", dismissHint, { passive: true });
+  mapContainer.addEventListener("touchstart", dismissHint, { passive: true });
+  mapContainer.addEventListener("pointerdown", dismissHint, { passive: true });
+}
+
+function initMapHintFade(mapInstance, baseLayer) {
   if (!mapInstance) return;
-  mapInstance.whenReady(showMapHintFade);
+
+  bindMapHintDismissOnInteraction(mapInstance);
+
+  const showWhenReady = () => {
+    if (hasShownMapHintFade) return;
+
+    // Espera al siguiente frame para asegurar que el mapa ya está visible.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        showMapHintFade();
+      });
+    });
+  };
+
+  if (baseLayer?.once) {
+    baseLayer.once("load", showWhenReady);
+  }
+
+  mapHintFadeFallbackTimer = setTimeout(() => {
+    showWhenReady();
+  }, 4200);
 }
 
 
@@ -660,8 +715,6 @@ function crearMapa(initialViewport) {
     center: bootstrap.center,
     zoom: bootstrap.zoom
   });
-  initMapHintFade(map);
-
   applyInitialViewport();
 
   topoBase = L.tileLayer(
@@ -677,6 +730,7 @@ function crearMapa(initialViewport) {
   );
 
   topoBase.addTo(map);
+  initMapHintFade(map, topoBase);
   addMyLocationControl();
 
   writeMapPref({
