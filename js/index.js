@@ -642,7 +642,7 @@ function showMapHintFade() {
 
   mapHintFadeAutoHideTimer = setTimeout(() => {
     hideMapHintFade();
-  }, 2600);
+  }, 3500);
 }
 
 function hideMapHintFade() {
