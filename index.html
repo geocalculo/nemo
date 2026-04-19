@@ -93,11 +93,6 @@
       <section class="map-column">
         <section class="mapwrap">
           <div id="map"></div>
-          <div id="map-hint-fade" class="map-hint-fade" aria-hidden="true">
-            <p>Explora áreas protegidas y restricciones ambientales</p>
-            <p>en cualquier parte del territorio.</p>
-            <p>Haz clic en el mapa para ver normativa y contexto ambiental.</p>
-          </div>
           <div id="mapSearch" class="map-search" role="search">
             <label for="mapSearchInput" class="sr-only">Buscar sitios</label>
             <input
@@ -199,6 +194,24 @@
     <a href="#" onclick="return goToGeoEVAMobile(event)">
       GeoEVA.cl
     </a>
+  </div>
+
+  <div id="welcomeModal" class="welcome-modal" hidden role="dialog" aria-modal="true" aria-labelledby="welcomeModalTitle">
+    <div class="welcome-modal__content">
+      <h2 id="welcomeModalTitle">Áreas protegidas y restricciones ambientales</h2>
+      <p>
+        Haz click en cualquier punto del mapa para identificar áreas protegidas y restricciones ambientales.
+        <br><br>
+        Evalúa su impacto respecto a tu proyecto y descarga geometrías en formato KML.
+      </p>
+
+      <button id="startBtn" class="welcome-btn" type="button">Comenzar</button>
+
+      <label class="welcome-checkbox">
+        <input type="checkbox" id="dontShowAgain">
+        No mostrar nuevamente
+      </label>
+    </div>
   </div>
 
 </body>

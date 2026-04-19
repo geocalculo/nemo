@@ -432,69 +432,95 @@ select option{
   white-space: nowrap;
 }
 
-.map-hint-fade {
+.welcome-modal{
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 5200;
+  inset: 0;
+  z-index: 6000;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 6, 23, 0.74);
+  padding: 20px;
+}
 
-  width: min(760px, calc(100vw - 44px));
-  padding: 20px 24px;
+.welcome-modal[hidden]{
+  display: none;
+}
+
+.welcome-modal__content{
+  width: min(560px, calc(100vw - 32px));
   border-radius: 16px;
-
-  background: rgba(2, 6, 23, 0.82);
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  color: #f8fafc;
-
-  font-size: clamp(1.04rem, 2vw, 1.5rem);
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: #0b1120;
+  box-shadow: 0 22px 56px rgba(2, 6, 23, 0.56);
+  color: #e2e8f0;
+  padding: 26px 24px 22px;
   text-align: center;
-  line-height: 1.35;
-
-  pointer-events: none;
-
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.45s ease, transform 0.45s ease, visibility 0.45s ease;
-
-  box-shadow:
-    0 20px 60px rgba(2, 6, 23, 0.55),
-    inset 0 1px 0 rgba(255,255,255,0.12);
 }
 
-.map-hint-fade p {
+.welcome-modal__content h2{
+  margin: 0 0 12px;
+  color: #f8fafc;
+  font-size: clamp(1.2rem, 2.4vw, 1.58rem);
+  line-height: 1.25;
+}
+
+.welcome-modal__content p{
   margin: 0;
+  color: #cbd5e1;
+  font-size: 0.98rem;
+  line-height: 1.5;
 }
 
-.map-hint-fade p + p {
-  margin-top: 6px;
+.welcome-btn{
+  margin-top: 18px;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #052e16;
+  background: linear-gradient(135deg, #86efac 0%, #4ade80 100%);
+  cursor: pointer;
+  transition: transform 0.16s ease, filter 0.16s ease;
 }
 
-.map-hint-fade.is-visible {
-  opacity: 1;
-  visibility: visible;
-  animation: hintPulse 1s ease-in-out 2;
+.welcome-btn:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.03);
 }
 
-@keyframes hintPulse {
-  0%   { transform: translate(-50%, -50%) scale(1); }
-  50%  { transform: translate(-50%, -50%) scale(1.02); }
-  100% { transform: translate(-50%, -50%) scale(1); }
+.welcome-btn:active{
+  transform: translateY(0);
+}
+
+.welcome-checkbox{
+  margin-top: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 0.92rem;
+}
+
+.welcome-checkbox input{
+  width: 16px;
+  height: 16px;
+}
+
+body.modal-open{
+  overflow: hidden;
 }
 
 @media (max-width: 768px){
-  .map-hint-fade {
-    width: min(94vw, 430px);
-    padding: 14px 16px;
-    border-radius: 14px;
-    font-size: clamp(0.94rem, 4.3vw, 1.08rem);
-    line-height: 1.3;
+  .welcome-modal{
+    padding: 14px;
   }
 
-  .map-hint-fade p + p {
-    margin-top: 5px;
+  .welcome-modal__content{
+    width: min(460px, calc(100vw - 20px));
+    border-radius: 14px;
+    padding: 22px 18px 18px;
   }
 }
 
