@@ -30,10 +30,6 @@ let _debugStep = 0;
 let map;
 let userMarker = null;
 let clickMarker = null;
-let hasShownMapHintFade = false;
-let mapHintFadeFallbackTimer = null;
-let mapHintFadeAutoHideTimer = null;
-let mapHintFadeInteractionBound = false;
 
 let topoBase = null;
 let satOverlay = null;
@@ -626,84 +622,6 @@ function resolveBootstrapView(viewport) {
   };
 }
 
-function showMapHintFade() {
-  if (hasShownMapHintFade) return;
-
-  const hint = document.getElementById("map-hint-fade");
-  if (!hint) return;
-
-  hasShownMapHintFade = true;
-  if (mapHintFadeFallbackTimer) {
-    clearTimeout(mapHintFadeFallbackTimer);
-    mapHintFadeFallbackTimer = null;
-  }
-
-  hint.classList.add("is-visible");
-
-  mapHintFadeAutoHideTimer = setTimeout(() => {
-    hideMapHintFade();
-  }, 3500);
-}
-
-function hideMapHintFade() {
-  const hint = document.getElementById("map-hint-fade");
-  if (!hint) return;
-  hint.classList.remove("is-visible");
-
-  if (mapHintFadeAutoHideTimer) {
-    clearTimeout(mapHintFadeAutoHideTimer);
-    mapHintFadeAutoHideTimer = null;
-  }
-}
-
-function bindMapHintDismissOnInteraction(mapInstance) {
-  if (!mapInstance || mapHintFadeInteractionBound) return;
-  mapHintFadeInteractionBound = true;
-
-  const dismissHint = () => {
-    if (!hasShownMapHintFade) return;
-    hideMapHintFade();
-  };
-
-  mapInstance.on("click", dismissHint);
-  mapInstance.on("movestart", dismissHint);
-  mapInstance.on("zoomstart", dismissHint);
-  mapInstance.on("dragstart", dismissHint);
-
-  const mapContainer = mapInstance.getContainer();
-  if (!mapContainer) return;
-
-  mapContainer.addEventListener("wheel", dismissHint, { passive: true });
-  mapContainer.addEventListener("touchstart", dismissHint, { passive: true });
-  mapContainer.addEventListener("pointerdown", dismissHint, { passive: true });
-}
-
-function initMapHintFade(mapInstance, baseLayer) {
-  if (!mapInstance) return;
-
-  bindMapHintDismissOnInteraction(mapInstance);
-
-  const showWhenReady = () => {
-    if (hasShownMapHintFade) return;
-
-    // Espera al siguiente frame para asegurar que el mapa ya está visible.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        showMapHintFade();
-      });
-    });
-  };
-
-  if (baseLayer?.once) {
-    baseLayer.once("load", showWhenReady);
-  }
-
-  mapHintFadeFallbackTimer = setTimeout(() => {
-    showWhenReady();
-  }, 4200);
-}
-
-
 function crearMapa(initialViewport) {
   const bootstrap = resolveBootstrapView(initialViewport);
 
@@ -730,7 +648,6 @@ function crearMapa(initialViewport) {
   );
 
   topoBase.addTo(map);
-  initMapHintFade(map, topoBase);
   addMyLocationControl();
 
   writeMapPref({
@@ -1866,6 +1783,47 @@ function initMapCursorHint(mapInstance) {
   mapEl.addEventListener("mousedown", hideHint);
 }
 
+function initWelcomeModal() {
+  const modal = document.getElementById("welcomeModal");
+  const startBtn = document.getElementById("startBtn");
+  const checkbox = document.getElementById("dontShowAgain");
+  if (!modal || !startBtn || !checkbox) return;
+
+  const hideKey = "hideWelcomeGeoNEMO";
+
+  const closeModal = () => {
+    modal.hidden = true;
+    document.body.classList.remove("modal-open");
+  };
+
+  if (localStorage.getItem(hideKey) === "true") {
+    closeModal();
+    return;
+  }
+
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+
+  startBtn.addEventListener("click", () => {
+    if (checkbox.checked) {
+      localStorage.setItem(hideKey, "true");
+    }
+    closeModal();
+  });
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) {
+      closeModal();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) {
+      closeModal();
+    }
+  });
+}
+
 
 
 /* ===========================
@@ -1882,6 +1840,7 @@ function initMapCursorHint(mapInstance) {
 
   bindUI();
   bindSearchUI();
+  initWelcomeModal();
 
   if (DEBUG_STEP_MODE) {
     debugLog("Debug listo. Pulsa Siguiente.");
