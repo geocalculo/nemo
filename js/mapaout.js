@@ -24,6 +24,11 @@ const TRACK_DEDUPE_WINDOW_MS = 1200;
 const TRACK_SITE = "geonemo";
 const _trackEventCache = new Map();
 let resultEventSent = false;
+const TRACK_DEBUG = new URLSearchParams(window.location.search).has("gtm_debug");
+
+if (TRACK_DEBUG) {
+  console.log("[GeoNEMO GTM] mapaout.js cargado con tracking");
+}
 
 
 
@@ -59,6 +64,10 @@ function trackEvent(payload, options = {}) {
       window.dataLayer = [];
     }
 
+    if (TRACK_DEBUG) {
+      console.log("[GeoNEMO GTM] evento enviado", payload);
+    }
+
     window.dataLayer.push(payload);
     return true;
   } catch (err) {
@@ -66,6 +75,8 @@ function trackEvent(payload, options = {}) {
     return false;
   }
 }
+
+window.trackEvent = trackEvent;
 
 function emitResultOpenEventOnce(links = []) {
   if (resultEventSent) return;
