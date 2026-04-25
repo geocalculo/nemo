@@ -22,6 +22,9 @@ const GROUPS_URL = "capas/grupos.json";
 
 // debug: si true, muestra en consola info detallada de cada paso (carga, stats, click, etc).
 const DEBUG_STEP_MODE = false;
+const TRACK_DEDUPE_WINDOW_MS = 1200;
+const TRACK_SITE = "geonemo";
+const _trackEventCache = new Map();
 
 let _debugBootstrap = null;
 let _debugStep = 0;
@@ -322,6 +325,44 @@ function fmtArea(m2){
 
 function nowIso(){ return new Date().toISOString(); }
 
+function pruneTrackEventCache(nowTs = Date.now()) {
+  for (const [key, ts] of _trackEventCache.entries()) {
+    if ((nowTs - ts) > TRACK_DEDUPE_WINDOW_MS) {
+      _trackEventCache.delete(key);
+    }
+  }
+}
+
+function trackEvent(payload, options = {}) {
+  try {
+    if (!payload || typeof payload !== "object") return false;
+    const eventName = String(payload.event || "").trim();
+    if (!eventName) return false;
+
+    const nowTs = Date.now();
+    pruneTrackEventCache(nowTs);
+
+    const dedupeKey = options.dedupeKey || `${eventName}:${JSON.stringify(payload)}`;
+    if (options.dedupe !== false) {
+      const lastTs = _trackEventCache.get(dedupeKey);
+      if (lastTs && (nowTs - lastTs) <= TRACK_DEDUPE_WINDOW_MS) {
+        return false;
+      }
+      _trackEventCache.set(dedupeKey, nowTs);
+    }
+
+    if (!Array.isArray(window.dataLayer)) {
+      window.dataLayer = [];
+    }
+
+    window.dataLayer.push(payload);
+    return true;
+  } catch (err) {
+    console.warn("[GeoNEMO] No se pudo enviar evento GTM:", err);
+    return false;
+  }
+}
+
 function bboxIntersects(b1, b2){
   return !(b2[0] > b1[2] || b2[2] < b1[0] || b2[1] > b1[3] || b2[3] < b1[1]);
 }
@@ -355,6 +396,13 @@ function buildCrossSiteUrl(baseUrl) {
 function goToGeoIPT(e){
   e.preventDefault();
 
+  trackEvent({
+    event: "geo_cross_navigation",
+    from: TRACK_SITE,
+    to: "geoipt",
+    method: "card"
+  }, { dedupeKey: "geo_cross_navigation:geoipt:card" });
+
   const base = "https://geoipt.cl/?utm_source=geonemo&utm_medium=card&utm_campaign=cruce_portales&utm_content=geoipt_lateral";
   const url = buildCrossSiteUrl(base);
   window.open(url, "_blank", "noopener");
@@ -363,6 +411,13 @@ function goToGeoIPT(e){
 
 function goToGeoEVA(e){
   e.preventDefault();
+
+  trackEvent({
+    event: "geo_cross_navigation",
+    from: TRACK_SITE,
+    to: "geoeva",
+    method: "card"
+  }, { dedupeKey: "geo_cross_navigation:geoeva:card" });
 
   const base = "https://geoeva.cl/?utm_source=geonemo&utm_medium=card&utm_campaign=cruce_portales&utm_content=geoeva_lateral";
   const url = buildCrossSiteUrl(base);
@@ -373,6 +428,13 @@ function goToGeoEVA(e){
 function goToGeoIPTMobile(e){
   e.preventDefault();
 
+  trackEvent({
+    event: "geo_cross_navigation",
+    from: TRACK_SITE,
+    to: "geoipt",
+    method: "link"
+  }, { dedupeKey: "geo_cross_navigation:geoipt:link" });
+
   const base = "https://geoipt.cl/?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema";
   const url = buildCrossSiteUrl(base);
   window.open(url, "_blank", "noopener");
@@ -381,6 +443,13 @@ function goToGeoIPTMobile(e){
 
 function goToGeoEVAMobile(e){
   e.preventDefault();
+
+  trackEvent({
+    event: "geo_cross_navigation",
+    from: TRACK_SITE,
+    to: "geoeva",
+    method: "link"
+  }, { dedupeKey: "geo_cross_navigation:geoeva:link" });
 
   const base = "https://geoeva.cl/?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema";
   const url = buildCrossSiteUrl(base);
@@ -1630,6 +1699,13 @@ async function onMapClick(e){
 
   const lat = e.latlng.lat;
   const lng = e.latlng.lng;
+
+  trackEvent({
+    event: "geo_click_map",
+    lat,
+    lng,
+    site: TRACK_SITE
+  }, { dedupeKey: `geo_click_map:${lat.toFixed(6)}:${lng.toFixed(6)}` });
 
   if (clickMarker) map.removeLayer(clickMarker);
   clickMarker = L.circleMarker([lat, lng], {
