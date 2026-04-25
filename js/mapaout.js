@@ -20,10 +20,77 @@
 
 const STORAGE_KEY = "geonemo_out_v2";
 const MAX_DISTANCE_FOR_DRAW = 300000; // 300 km - más allá no dibujamos geometría
+const TRACK_DEDUPE_WINDOW_MS = 1200;
+const TRACK_SITE = "geonemo";
+const _trackEventCache = new Map();
+let resultEventSent = false;
 
 
 
 const HAS_TURF = typeof turf !== "undefined";
+
+function pruneTrackEventCache(nowTs = Date.now()) {
+  for (const [key, ts] of _trackEventCache.entries()) {
+    if ((nowTs - ts) > TRACK_DEDUPE_WINDOW_MS) {
+      _trackEventCache.delete(key);
+    }
+  }
+}
+
+function trackEvent(payload, options = {}) {
+  try {
+    if (!payload || typeof payload !== "object") return false;
+    const eventName = String(payload.event || "").trim();
+    if (!eventName) return false;
+
+    const nowTs = Date.now();
+    pruneTrackEventCache(nowTs);
+
+    const dedupeKey = options.dedupeKey || `${eventName}:${JSON.stringify(payload)}`;
+    if (options.dedupe !== false) {
+      const lastTs = _trackEventCache.get(dedupeKey);
+      if (lastTs && (nowTs - lastTs) <= TRACK_DEDUPE_WINDOW_MS) {
+        return false;
+      }
+      _trackEventCache.set(dedupeKey, nowTs);
+    }
+
+    if (!Array.isArray(window.dataLayer)) {
+      window.dataLayer = [];
+    }
+
+    window.dataLayer.push(payload);
+    return true;
+  } catch (err) {
+    console.warn("[GeoNEMO] No se pudo enviar evento GTM:", err);
+    return false;
+  }
+}
+
+function emitResultOpenEventOnce(links = []) {
+  if (resultEventSent) return;
+  if (!Array.isArray(links) || !links.length) return;
+
+  const validLinks = links.filter((link) => link && typeof link === "object" && link.link_type !== "error");
+  if (!validLinks.length) return;
+
+  const groupsInside = validLinks.filter((link) => link.link_type === "inside").length;
+  const groupsWithGeometry = validLinks.filter((link) => !!link.feature?.geometry).length;
+
+  let resultType = "none";
+  if (groupsInside > 0) resultType = "inside_match";
+  else if (groupsWithGeometry > 0) resultType = "nearest_only";
+
+  trackEvent({
+    event: "geo_result_open",
+    site: TRACK_SITE,
+    result_type: resultType,
+    groups_total: validLinks.length,
+    groups_inside: groupsInside
+  }, { dedupeKey: "geo_result_open:initial" });
+
+  resultEventSent = true;
+}
 
 function addBasemapSatelliteWithLabels(map, { grayscale = false } = {}) {
   // panes (aisla filtro BN solo al satélite)
@@ -1121,6 +1188,7 @@ function ensureFarSectionContainer() {
 =========================== */
 function loadAndRender() {
   try {
+    resultEventSent = false;
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       document.body.innerHTML = `
@@ -1136,7 +1204,7 @@ function loadAndRender() {
     const click = data.click || {};
     const links = data.links || [];
 
-    if (!click.lat || !click.lng) {
+    if (!Number.isFinite(click.lat) || !Number.isFinite(click.lng)) {
       throw new Error("Punto consultado inválido");
     }
 
@@ -1153,6 +1221,8 @@ function loadAndRender() {
     });
 
     const far = sorted.filter(isFar);
+
+    emitResultOpenEventOnce(sorted);
 
     initMainMap(click.lat, click.lng, sorted);
     generarResumenAreas(click.lat, click.lng, sorted);
@@ -1453,6 +1523,12 @@ function bindUI() {
   const btnDownloadKML = document.getElementById("btnDownloadKML");
   if (btnDownloadKML) {
     btnDownloadKML.addEventListener("click", () => {
+      trackEvent({
+        event: "geo_download_attempt",
+        file_type: "kml",
+        site: TRACK_SITE
+      }, { dedupeKey: "geo_download_attempt:kml" });
+
       try {
         const kml = buildMainMapKmlFromStorage();
         if (!kml) {
@@ -1464,6 +1540,12 @@ function bindUI() {
           kml,
           `geonemo-mapa-principal-${new Date().toISOString().slice(0, 10)}.kml`
         );
+
+        trackEvent({
+          event: "geo_download_success",
+          file_type: "kml",
+          site: TRACK_SITE
+        }, { dedupeKey: "geo_download_success:kml" });
 
         toast("✅ KML descargado", 1500);
       } catch (e) {
