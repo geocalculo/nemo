@@ -446,16 +446,16 @@ select option{
 }
 
 .welcome-modal__content{
-  width: min(96vw, 960px);
-  max-height: 90vh;
+  width: min(92vw, 760px);
+  max-height: 88vh;
   overflow-y: auto;
   overflow-x: hidden;
-  border-radius: 20px;
+  border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   background: linear-gradient(180deg, #0b1120 0%, #07140f 100%);
   box-shadow: 0 24px 70px rgba(2, 6, 23, 0.62);
   color: #e2e8f0;
-  padding: 24px;
+  padding: 22px 20px;
   text-align: center;
 }
 
@@ -502,12 +502,12 @@ select option{
 
 .modal-3-pasos{
   width: 100%;
-  max-width: 860px;
+  max-width: 620px;
   height: auto;
-  max-height: 46vh;
+  max-height: 34vh;
   object-fit: contain;
   display: block;
-  margin: 14px auto 12px;
+  margin: 18px auto;
   border-radius: 16px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.26);
@@ -562,10 +562,10 @@ body.modal-open{
   }
 
   .welcome-modal__content{
-    width: calc(100vw - 20px);
-    max-height: 88vh;
+    width: calc(100vw - 24px);
+    max-height: 90vh;
     border-radius: 16px;
-    padding: 18px 14px 16px;
+    padding: 20px 16px;
   }
 
   .welcome-modal__eyebrow{
@@ -587,14 +587,10 @@ body.modal-open{
 
 .modal-3-pasos{
   width: 100%;
-  max-width: 760px;   /* antes 860px */
-  max-height: 42vh;   /* antes 46vh */
-  margin: 16px auto 14px;
+  max-width: 620px;
+  max-height: 30vh;
+  margin: 18px auto;
   border-radius: 14px;
-
-  /* 👇 CLAVE: efecto más integrado */
-  background: rgba(255,255,255,0.04);
-  padding: 10px;
 }
 
   .welcome-btn{
@@ -623,9 +619,10 @@ body.modal-open{
   }
 
   .welcome-modal__content{
-    width: min(460px, calc(100vw - 20px));
+    width: calc(100vw - 24px);
+    max-height: 90vh;
     border-radius: 14px;
-    padding: 22px 18px 18px;
+    padding: 20px 16px;
   }
 }
 
