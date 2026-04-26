@@ -196,33 +196,41 @@
     </a>
   </div>
 
-  <div id="welcomeModal" class="welcome-modal" hidden role="dialog" aria-modal="true" aria-labelledby="welcomeModalTitle">
-    <div class="welcome-modal__content">
-      
-      <h2 id="welcomeModalTitle">Áreas protegidas y restricciones ambientales en un clic</h2>
+<div id="welcomeModal" class="welcome-modal" hidden role="dialog" aria-modal="true" aria-labelledby="welcomeModalTitle">
+  <div class="welcome-modal__content">
 
-      <p>
-        Haz clic en cualquier punto del mapa y detecta si tu proyecto está cerca o dentro de áreas protegidas,
-        humedales, salares, parques o zonas con restricción ambiental.
-      </p>
 
-      <p>
-        GeoNEMO te entrega contexto territorial inmediato y permite descargar geometrías en formato KML para análisis GIS.
-      </p>
+    <h2 id="welcomeModalTitle">
+      Detecta áreas protegidas y restricciones ambientales antes de avanzar
+    </h2>
 
-      <!-- (opcional futuro: aquí irá el GIF lugar + clic → análisis → KML) -->
+    <p class="welcome-modal__lead">
+      Haz clic en cualquier punto del mapa y GeoNEMO revisa el entorno territorial:
+      áreas protegidas, humedales, salares, parques y zonas sensibles.
+    </p>
 
-      <button id="startBtn" class="welcome-btn" type="button">
-        Explorar mapa
-      </button>
+    <img
+      class="modal-3-pasos"
+      src="assets/modal-3-pasos.png"
+      alt="Flujo GeoNEMO: mapa, clic, análisis territorial y descarga KML"
+      loading="eager"
+    />
 
-      <label class="welcome-checkbox">
-        <input type="checkbox" id="dontShowAgain">
-        No mostrar nuevamente
-      </label>
+    <p class="welcome-modal__support">
+      Obtén contexto inmediato y descarga geometrías KML para continuar tu análisis en GIS.
+    </p>
 
-    </div>
+    <button id="startBtn" class="welcome-btn" type="button">
+      Explorar GeoNEMO
+    </button>
+    <br><br>
+    <label class="welcome-checkbox">
+      <input type="checkbox" id="dontShowAgain">
+      No mostrar nuevamente
+    </label>
+
   </div>
+</div>
 
 </body>
 </html>

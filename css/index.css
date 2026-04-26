@@ -431,7 +431,6 @@ select option{
   transition: opacity 0.2s ease;
   white-space: nowrap;
 }
-
 .welcome-modal{
   position: fixed;
   inset: 0;
@@ -439,7 +438,7 @@ select option{
   display: grid;
   place-items: center;
   background: rgba(2, 6, 23, 0.74);
-  padding: 20px;
+  padding: 18px;
 }
 
 .welcome-modal[hidden]{
@@ -447,47 +446,91 @@ select option{
 }
 
 .welcome-modal__content{
-  width: min(560px, calc(100vw - 32px));
-  border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background: #0b1120;
-  box-shadow: 0 22px 56px rgba(2, 6, 23, 0.56);
+  width: min(96vw, 960px);
+  max-height: 90vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-radius: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: linear-gradient(180deg, #0b1120 0%, #07140f 100%);
+  box-shadow: 0 24px 70px rgba(2, 6, 23, 0.62);
   color: #e2e8f0;
-  padding: 26px 24px 22px;
+  padding: 24px;
   text-align: center;
 }
 
+.welcome-modal__eyebrow{
+  display: inline-flex;
+  margin: 0 0 10px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(132, 204, 22, 0.14);
+  border: 1px solid rgba(190, 242, 100, 0.22);
+  color: #bef264;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
 .welcome-modal__content h2{
-  margin: 0 0 12px;
+  max-width: 760px;
+  margin: 0 auto 10px;
   color: #f8fafc;
-  font-size: clamp(1.2rem, 2.4vw, 1.58rem);
-  line-height: 1.25;
+  font-size: clamp(1.28rem, 2.4vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
 }
 
 .welcome-modal__content p{
-  margin: 0;
+  margin: 0 auto;
   color: #cbd5e1;
   font-size: 0.98rem;
-  line-height: 1.5;
+  line-height: 1.45;
+}
+
+.welcome-modal__lead{
+  max-width: 720px;
+  margin-bottom: 14px !important;
+}
+
+.welcome-modal__support{
+  max-width: 720px;
+  margin-top: 12px !important;
+  color: #a7f3d0 !important;
+  font-weight: 600;
+}
+
+.modal-3-pasos{
+  width: 100%;
+  max-width: 860px;
+  height: auto;
+  max-height: 46vh;
+  object-fit: contain;
+  display: block;
+  margin: 14px auto 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.26);
 }
 
 .welcome-btn{
   margin-top: 18px;
   width: 100%;
+  max-width: 520px;
   border: 0;
-  border-radius: 12px;
-  padding: 12px 16px;
+  border-radius: 14px;
+  padding: 13px 16px;
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: 800;
   color: #052e16;
-  background: linear-gradient(135deg, #86efac 0%, #4ade80 100%);
+  background: linear-gradient(135deg, #bef264 0%, #4ade80 100%);
   cursor: pointer;
   transition: transform 0.16s ease, filter 0.16s ease;
 }
 
 .welcome-btn:hover{
   transform: translateY(-1px);
-  filter: brightness(1.03);
+  filter: brightness(1.04);
 }
 
 .welcome-btn:active{
@@ -503,6 +546,68 @@ select option{
   font-size: 0.92rem;
 }
 
+.welcome-checkbox input{
+  width: 16px;
+  height: 16px;
+}
+
+body.modal-open{
+  overflow: hidden;
+}
+
+@media (max-width: 768px){
+  .welcome-modal{
+    padding: 10px;
+    align-items: center;
+  }
+
+  .welcome-modal__content{
+    width: calc(100vw - 20px);
+    max-height: 88vh;
+    border-radius: 16px;
+    padding: 18px 14px 16px;
+  }
+
+  .welcome-modal__eyebrow{
+    font-size: 0.74rem;
+    padding: 5px 10px;
+    margin-bottom: 8px;
+  }
+
+  .welcome-modal__content h2{
+    font-size: 1.18rem;
+    line-height: 1.16;
+    margin-bottom: 8px;
+  }
+
+  .welcome-modal__content p{
+    font-size: 0.88rem;
+    line-height: 1.38;
+  }
+
+.modal-3-pasos{
+  width: 100%;
+  max-width: 760px;   /* antes 860px */
+  max-height: 42vh;   /* antes 46vh */
+  margin: 16px auto 14px;
+  border-radius: 14px;
+
+  /* 👇 CLAVE: efecto más integrado */
+  background: rgba(255,255,255,0.04);
+  padding: 10px;
+}
+
+  .welcome-btn{
+    margin-top: 14px;
+    padding: 12px 14px;
+    border-radius: 12px;
+  }
+
+  .welcome-checkbox{
+    margin-top: 11px;
+    font-size: 0.84rem;
+  }
+}
 .welcome-checkbox input{
   width: 16px;
   height: 16px;
