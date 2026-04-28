@@ -259,6 +259,36 @@ function fmtArea(m2) {
   return `${ha.toLocaleString("es-CL", { maximumFractionDigits: 1 })} ha`;
 }
 
+function formatKm(value) {
+  if (!isFinite(value) || value == null) return "—";
+  return `${Number(value).toLocaleString("es-CL", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} km`;
+}
+
+function calcDiametroEquivalenteKm(areaKm2) {
+  if (!isFinite(areaKm2) || areaKm2 <= 0) return null;
+  return 2 * Math.sqrt(areaKm2 / Math.PI);
+}
+
+function calcRelacionDistanciaTamano(distanciaKm, diametroKm) {
+  if (!isFinite(distanciaKm) || !isFinite(diametroKm) || diametroKm <= 0) return null;
+  return distanciaKm / diametroKm;
+}
+
+function getInterpretacionEspacial(distanciaKm, isInside) {
+  if (isInside || (isFinite(distanciaKm) && distanciaKm === 0)) {
+    return "Afectación espacial directa: el punto consultado intersecta el polígono.";
+  }
+  if (!isFinite(distanciaKm)) return "Interpretación no disponible por falta de distancia.";
+  if (distanciaKm <= 1) return "Influencia inmediata: el punto se encuentra a menos de 1 km del área protegida.";
+  if (distanciaKm <= 2) return "Influencia cercana: el punto se encuentra dentro del entorno de 2 km.";
+  if (distanciaKm <= 5) return "Influencia territorial relevante: el punto se encuentra dentro del entorno de 5 km.";
+  if (distanciaKm <= 10) return "Influencia territorial moderada: el punto se encuentra dentro del entorno de 10 km.";
+  return "Referencia ambiental lejana: fuera del rango de influencia directa recomendado.";
+}
+
 function normalizarRegiones(regionStr) {
   if (!regionStr) return [];
   const separators = /[;,\/]|\s+y\s+/gi;
@@ -418,6 +448,94 @@ function computeSurfaceM2(feature) {
     } catch (e) {}
   }
 
+  return null;
+}
+
+function parseLengthToKm(raw) {
+  if (raw == null) return null;
+  const isNum = typeof raw === "number" && isFinite(raw);
+  const s = String(raw).trim();
+  if (!s) return null;
+
+  const num = isNum
+    ? raw
+    : parseFloat(
+      s
+        .toLowerCase()
+        .replace(/\s/g, "")
+        .replace(/[^\d.,-]/g, "")
+        .replace(",", ".")
+    );
+
+  if (!isFinite(num)) return null;
+  const sl = s.toLowerCase();
+  if (sl.includes("km")) return num;
+  if (sl.includes("m")) return num / 1000;
+
+  // Heurística: valores muy grandes suelen venir en metros
+  if (num > 2000) return num / 1000;
+  return num;
+}
+
+function pickPerimeterProp(props) {
+  if (!props || typeof props !== "object") return null;
+  const entries = Object.entries(props);
+  const scoreKey = (kNorm) => {
+    let s = 0;
+    if (kNorm.includes("perimet")) s += 100;
+    if (kNorm.includes("perim")) s += 85;
+    if (kNorm.includes("length")) s += 55;
+    if (kNorm.includes("longitud")) s += 45;
+    if (kNorm.includes("linea")) s += 20;
+    return s;
+  };
+  let best = null;
+  for (const [k, v] of entries) {
+    const kn = normKey(k);
+    const score = scoreKey(kn);
+    if (score <= 0) continue;
+    if (!/[\d]/.test(String(v ?? ""))) continue;
+    if (!best || score > best.score) best = { key: k, value: v, score };
+  }
+  return best;
+}
+
+function computePerimeterKm(feature) {
+  if (!feature) return null;
+  const props = feature?.properties || {};
+  const picked = pickPerimeterProp(props);
+  if (picked) {
+    const km = parseLengthToKm(picked.value);
+    if (isFinite(km) && km > 0) return km;
+  }
+  if (HAS_TURF && feature?.geometry) {
+    try {
+      if (typeof turf.polygonToLine === "function" && typeof turf.length === "function") {
+        const line = turf.polygonToLine(feature);
+        const km = turf.length(line, { units: "kilometers" });
+        if (isFinite(km) && km > 0) return km;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+function getCentroideInfo(feature) {
+  if (!feature) return null;
+  const props = feature?.properties || {};
+  const latProp = props.CENTROIDE_LAT ?? props.centroide_lat ?? props.lat_centroid ?? props.centroid_lat;
+  const lngProp = props.CENTROIDE_LON ?? props.CENTROIDE_LNG ?? props.centroide_lon ?? props.centroide_lng ?? props.lng_centroid ?? props.centroid_lng;
+  const latN = latProp != null ? Number(latProp) : NaN;
+  const lngN = lngProp != null ? Number(lngProp) : NaN;
+
+  if (isFinite(latN) && isFinite(lngN)) return { lat: latN, lng: lngN };
+  if (HAS_TURF && feature?.geometry) {
+    try {
+      const c = turf.centroid(feature);
+      const [lng, lat] = c.geometry.coordinates;
+      if (isFinite(lat) && isFinite(lng)) return { lat, lng };
+    } catch (_) {}
+  }
   return null;
 }
 
@@ -873,6 +991,8 @@ function extractGroupData(link) {
   let regiones = [];
   let decreto = null;
   let decretoLink = null;
+  let emisor = null;
+  let linkBcn = null;
   let ubicacion = null;
   let tipo = null;
 
@@ -892,6 +1012,8 @@ function extractGroupData(link) {
 
     decreto = props.DECRETO || props.decreto || null;
     decretoLink = props.LINK || props.link || null;
+    emisor = props.EMISOR || props.emisor || null;
+    linkBcn = props.LINK_BCN || props.link_bcn || props.BCN || props.bcn || decretoLink || null;
   }
 
   if (layerId.includes("ramsar")) {
@@ -904,7 +1026,12 @@ function extractGroupData(link) {
     ubicacion = [reg, prov, com].filter(Boolean).join(", ") || null;
 
     decreto = props.Decreto || props.decreto || null;
+    emisor = props.Emisor || props.emisor || null;
+    linkBcn = props.LinkBCN || props.link_bcn || props.BCN || props.bcn || null;
   }
+
+  emisor = emisor || props.emisor || props.Emisor || props.MINISTERIO || props.ministerio || null;
+  linkBcn = linkBcn || props.LINK_BCN || props.link_bcn || props.url_bcn || props.URL_BCN || null;
 
   // Fallback genérico de nombre si no calzó grupo
   if (nombre === "—") {
@@ -926,6 +1053,8 @@ function extractGroupData(link) {
     regiones,
     decreto,
     decretoLink,
+    emisor,
+    linkBcn,
     ubicacion,
     tipo,
   };
@@ -946,6 +1075,21 @@ function renderGroupCard(link, clickLat, clickLng, index) {
   const distKm = distanceM != null ? fmtKm(distanceM) : "—";
   const borderKm = distanceBorderM != null ? fmtKm(distanceBorderM) : null;
   const isInside = link.link_type === "inside";
+  const distanceKm = isFinite(distanceM) ? (distanceM / 1000) : null;
+  const distanceBorderKm = isFinite(distanceBorderM) ? (distanceBorderM / 1000) : null;
+  const surfaceM2 = computeSurfaceM2(link.feature);
+  const areaKm2 = isFinite(surfaceM2) ? (surfaceM2 / 1e6) : null;
+  const perimeterKm = computePerimeterKm(link.feature);
+  const diametroKm = calcDiametroEquivalenteKm(areaKm2);
+  const relacion = calcRelacionDistanciaTamano(distanceKm, diametroKm);
+  const interpretacion = getInterpretacionEspacial(distanceKm, isInside);
+  const centroide = getCentroideInfo(link.feature);
+  const estadoText = isInside || distanceKm === 0 ? "DIRECTO" : "PROXIMIDAD";
+  const relationText = isInside
+    ? "El POI se encuentra dentro del área protegida."
+    : (isFinite(relacion)
+      ? `El POI está a ${relacion.toFixed(1)}x el diámetro equivalente del área protegida.`
+      : "No fue posible calcular la relación distancia/tamaño por datos incompletos.");
 
   const bodyId = `body-${groupId}`;
   const toggleBtnId = `toggle-${mapId}`;
@@ -981,10 +1125,59 @@ function renderGroupCard(link, clickLat, clickLng, index) {
             ` : ""}
           </div>
 
+          <div class="groupBlock">
+            <div class="groupBlock__title">Indicadores geométricos</div>
+            <div class="miniKpiGrid">
+              <div class="miniKpi">
+                <div class="kpi__label">Superficie calculada</div>
+                <div class="kpi__value">${isFinite(areaKm2) ? formatKm(areaKm2).replace(" km", " km²") : "—"}</div>
+              </div>
+              <div class="miniKpi">
+                <div class="kpi__label">Perímetro</div>
+                <div class="kpi__value">${isFinite(perimeterKm) ? formatKm(perimeterKm) : "—"}</div>
+              </div>
+              <div class="miniKpi">
+                <div class="kpi__label">Diámetro equivalente</div>
+                <div class="kpi__value">${isFinite(diametroKm) ? formatKm(diametroKm) : "—"}</div>
+              </div>
+              ${centroide ? `
+              <div class="miniKpi">
+                <div class="kpi__label">Centroide</div>
+                <div class="kpi__value">${centroide.lat.toFixed(5)}, ${centroide.lng.toFixed(5)}</div>
+              </div>
+              ` : ""}
+            </div>
+          </div>
+
+          <div class="groupBlock">
+            <div class="groupBlock__title">Relación POI–Polígono</div>
+            <div class="miniKpiGrid">
+              <div class="miniKpi">
+                <div class="kpi__label">Distancia mínima al borde</div>
+                <div class="kpi__value">${isInside ? "0 km (dentro)" : (isFinite(distanceBorderKm) ? formatKm(distanceBorderKm) : distKm)}</div>
+              </div>
+              <div class="miniKpi">
+                <div class="kpi__label">Estado</div>
+                <div class="kpi__value">${estadoText}</div>
+              </div>
+              <div class="miniKpi miniKpi--full">
+                <div class="kpi__label">Relación distancia/tamaño</div>
+                <div class="kpi__value">${isFinite(relacion) ? `${relacion.toFixed(2)}x` : "—"}</div>
+              </div>
+            </div>
+            <div class="insightText">${relationText}</div>
+          </div>
+
+          <div class="groupBlock">
+            <div class="groupBlock__title">Interpretación automática</div>
+            <div class="insightText">${interpretacion}</div>
+          </div>
+
           <div class="groupAttrs">
             <table class="attrTable">
   `;
 
+  bodyHTML += `<tr><td class="k">Nombre</td><td class="v">${data.nombre}</td></tr>`;
   if (data.categoria) bodyHTML += `<tr><td class="k">Categoría</td><td class="v">${data.categoria}</td></tr>`;
   if (data.tipo) bodyHTML += `<tr><td class="k">Tipo</td><td class="v">${data.tipo}</td></tr>`;
   if (data.superficie) bodyHTML += `<tr><td class="k">Superficie</td><td class="v">${data.superficie}</td></tr>`;
@@ -997,6 +1190,12 @@ function renderGroupCard(link, clickLat, clickLng, index) {
     }
     bodyHTML += `<tr><td class="k">Decreto</td><td class="v">${decretoHTML}</td></tr>`;
   }
+  if (data.emisor) bodyHTML += `<tr><td class="k">Emisor</td><td class="v">${data.emisor}</td></tr>`;
+  bodyHTML += `<tr><td class="k">Link BCN</td><td class="v">${
+    data.linkBcn
+      ? `<a href="${data.linkBcn}" target="_blank" rel="noopener" style="color:#65a30d;">Ver fuente BCN</a>`
+      : `<span class="muted">Fuente BCN no disponible</span>`
+  }</td></tr>`;
 
   bodyHTML += `
             </table>
