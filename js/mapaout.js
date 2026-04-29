@@ -296,12 +296,12 @@ function normalizarRegiones(regionStr) {
   return partes.map((r) => r.replace(/^Región\s+(de\s+)?/i, "").trim());
 }
 
-function getDictamen(linkType) {
-  if (linkType === "inside") return { text: "DENTRO", class: "in" };
-  if (linkType === "nearest_perimeter") return { text: "PROXIMIDAD", class: "prox" };
-  if (linkType === "none") return { text: "SIN DATOS", class: "none" };
-  if (linkType === "error") return { text: "ERROR", class: "none" };
-  return { text: "—", class: "none" };
+function getDictamen(linkType, distanceBorderKm) {
+  if (linkType === "inside") return { text: "CRÍTICO", class: "critical" };
+  if (!isFinite(distanceBorderKm)) return { text: "SIN DATOS", class: "neutral" };
+  if (distanceBorderKm <= 1) return { text: "CERCANO", class: "near" };
+  if (distanceBorderKm <= 5) return { text: "PROXIMIDAD", class: "prox" };
+  return { text: "LEJANO", class: "far" };
 }
 
 // Calcular orientación cardinal desde punto a centroide de geometría
@@ -539,6 +539,18 @@ function getCentroideInfo(feature) {
   return null;
 }
 
+function getCentroidDistanceKm(feature, clickLat, clickLng) {
+  if (!HAS_TURF || !feature?.geometry || !isFinite(clickLat) || !isFinite(clickLng)) return null;
+  try {
+    const centroid = turf.centroid(feature);
+    const poi = turf.point([clickLng, clickLat]);
+    const km = turf.distance(poi, centroid, { units: "kilometers" });
+    return isFinite(km) ? km : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /* ===========================
    Focus marker (pulso + flecha) en mapas de detalle
 =========================== */
@@ -749,8 +761,8 @@ function initMainMap(lat, lng, links) {
     if (tag) mainLabelLayers.push(tag);
 
     const data = extractGroupData(link);
-    const dictamen = getDictamen(link.link_type);
-    const distKm = fmtKm(distance_m);
+    const dictamen = getDictamen(link.link_type, isFinite(link.distance_border_m) ? (link.distance_border_m / 1000) : null);
+    const distKm = isFinite(link.distance_border_m) ? fmtKm(link.distance_border_m) : fmtKm(distance_m);
 
     poly.bindPopup(`
       <div style="min-width:180px;">
@@ -956,7 +968,7 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
           } catch (e) {
             map.setView([lat, lng], 12);
           }
-          toggleBtn.textContent = "📍 Punto + área";
+          toggleBtn.textContent = "📍 Ver punto + área";
           showingPoint = false;
         } else {
           pointMarker.addTo(map);
@@ -967,7 +979,7 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
           } catch (e) {
             map.setView([lat, lng], 12);
           }
-          toggleBtn.textContent = "🗺️ Solo área";
+          toggleBtn.textContent = "🗺️ Ver solo área";
           showingPoint = true;
         }
       });
@@ -1064,31 +1076,28 @@ function extractGroupData(link) {
    Renderizar tarjeta de grupo (≤300 km) con mapa
 =========================== */
 function renderGroupCard(link, clickLat, clickLng, index) {
-  const dictamen = getDictamen(link.link_type);
-  const distanceM = link.distance_m;
+  const distanceBorderKm = isFinite(link.distance_border_m) ? (link.distance_border_m / 1000) : null;
+  const dictamen = getDictamen(link.link_type, distanceBorderKm);
   const distanceBorderM = link.distance_border_m;
   const data = extractGroupData(link);
 
   const groupId = `group-${index}`;
   const mapId = `map-${groupId}`;
 
-  const distKm = distanceM != null ? fmtKm(distanceM) : "—";
-  const borderKm = distanceBorderM != null ? fmtKm(distanceBorderM) : null;
+  const borderKm = isFinite(distanceBorderM) ? fmtKm(distanceBorderM) : "—";
   const isInside = link.link_type === "inside";
-  const distanceKm = isFinite(distanceM) ? (distanceM / 1000) : null;
-  const distanceBorderKm = isFinite(distanceBorderM) ? (distanceBorderM / 1000) : null;
+  const distanceCentroidKm = getCentroidDistanceKm(link.feature, clickLat, clickLng);
   const surfaceM2 = computeSurfaceM2(link.feature);
   const areaKm2 = isFinite(surfaceM2) ? (surfaceM2 / 1e6) : null;
   const perimeterKm = computePerimeterKm(link.feature);
   const diametroKm = calcDiametroEquivalenteKm(areaKm2);
-  const relacion = calcRelacionDistanciaTamano(distanceKm, diametroKm);
-  const interpretacion = getInterpretacionEspacial(distanceKm, isInside);
+  const relacion = calcRelacionDistanciaTamano(distanceBorderKm, diametroKm);
+  const interpretacion = getInterpretacionEspacial(distanceBorderKm, isInside);
   const centroide = getCentroideInfo(link.feature);
-  const estadoText = isInside || distanceKm === 0 ? "DIRECTO" : "PROXIMIDAD";
   const relationText = isInside
     ? "El POI se encuentra dentro del área protegida."
     : (isFinite(relacion)
-      ? `El POI está a ${relacion.toFixed(1)}x el diámetro equivalente del área protegida.`
+      ? `El POI está a ${relacion.toFixed(1)} veces el diámetro equivalente del área protegida.`
       : "No fue posible calcular la relación distancia/tamaño por datos incompletos.");
 
   const bodyId = `body-${groupId}`;
@@ -1101,7 +1110,7 @@ function renderGroupCard(link, clickLat, clickLng, index) {
           <div class="groupMapHead">
             <div class="left">${data.nombre}</div>
             <div class="right">
-              <button class="btnSm btn--ghost" id="${toggleBtnId}" type="button">🗺️ Solo área</button>
+              <button class="btnSm btn--ghost" id="${toggleBtnId}" type="button">🗺️ Ver solo área</button>
             </div>
           </div>
           <div class="groupMap" id="${mapId}"></div>
@@ -1110,67 +1119,55 @@ function renderGroupCard(link, clickLat, clickLng, index) {
         <div class="groupSide">
           <div class="groupKpis">
             <div>
-              <div class="kpi__label">Dictamen</div>
+              <div class="kpi__label">🧭 Dictamen</div>
               <div class="badge badge--${dictamen.class}">${dictamen.text}</div>
             </div>
             <div>
-              <div class="kpi__label">Distancia mínima</div>
-              <div class="kpi__value">${isInside ? "0 km (dentro)" : distKm}</div>
+              <div class="kpi__label">📏 Distancia al borde</div>
+              <div class="kpi__value">${isInside ? "0.00 km (dentro)" : borderKm}</div>
             </div>
-            ${borderKm && link.link_type !== "none" ? `
             <div>
-              <div class="kpi__label">Distancia al borde</div>
-              <div class="kpi__value">${borderKm}</div>
+              <div class="kpi__label">🎯 Distancia al centroide</div>
+              <div class="kpi__value">${isFinite(distanceCentroidKm) ? formatKm(distanceCentroidKm) : "—"}</div>
             </div>
-            ` : ""}
-          </div>
-
-          <div class="groupBlock">
-            <div class="groupBlock__title">Indicadores geométricos</div>
-            <div class="miniKpiGrid">
-              <div class="miniKpi">
-                <div class="kpi__label">Superficie calculada</div>
-                <div class="kpi__value">${isFinite(areaKm2) ? formatKm(areaKm2).replace(" km", " km²") : "—"}</div>
-              </div>
-              <div class="miniKpi">
-                <div class="kpi__label">Perímetro</div>
-                <div class="kpi__value">${isFinite(perimeterKm) ? formatKm(perimeterKm) : "—"}</div>
-              </div>
-              <div class="miniKpi">
-                <div class="kpi__label">Diámetro equivalente</div>
-                <div class="kpi__value">${isFinite(diametroKm) ? formatKm(diametroKm) : "—"}</div>
-              </div>
-              ${centroide ? `
-              <div class="miniKpi">
-                <div class="kpi__label">Centroide</div>
-                <div class="kpi__value">${centroide.lat.toFixed(5)}, ${centroide.lng.toFixed(5)}</div>
-              </div>
-              ` : ""}
+            <div>
+              <div class="kpi__label">🔎 Relación distancia/tamaño</div>
+              <div class="kpi__value">${isFinite(relacion) ? `${relacion.toFixed(2)}x` : "—"}</div>
             </div>
           </div>
 
           <div class="groupBlock">
             <div class="groupBlock__title">Relación POI–Polígono</div>
-            <div class="miniKpiGrid">
-              <div class="miniKpi">
-                <div class="kpi__label">Distancia mínima al borde</div>
-                <div class="kpi__value">${isInside ? "0 km (dentro)" : (isFinite(distanceBorderKm) ? formatKm(distanceBorderKm) : distKm)}</div>
-              </div>
-              <div class="miniKpi">
-                <div class="kpi__label">Estado</div>
-                <div class="kpi__value">${estadoText}</div>
-              </div>
-              <div class="miniKpi miniKpi--full">
-                <div class="kpi__label">Relación distancia/tamaño</div>
-                <div class="kpi__value">${isFinite(relacion) ? `${relacion.toFixed(2)}x` : "—"}</div>
-              </div>
-            </div>
             <div class="insightText">${relationText}</div>
           </div>
 
           <div class="groupBlock">
             <div class="groupBlock__title">Interpretación automática</div>
             <div class="insightText">${interpretacion}</div>
+          </div>
+
+          <div class="groupBlock">
+            <div class="groupBlock__title">Indicadores geométricos</div>
+            <div class="miniKpiGrid">
+              <div class="miniKpi">
+                <div class="kpi__label">📐 Superficie</div>
+                <div class="kpi__value">${isFinite(areaKm2) ? formatKm(areaKm2).replace(" km", " km²") : "—"}</div>
+              </div>
+              <div class="miniKpi">
+                <div class="kpi__label">⭕ Perímetro</div>
+                <div class="kpi__value">${isFinite(perimeterKm) ? formatKm(perimeterKm) : "—"}</div>
+              </div>
+              <div class="miniKpi">
+                <div class="kpi__label">◯ Diámetro</div>
+                <div class="kpi__value">${isFinite(diametroKm) ? formatKm(diametroKm) : "—"}</div>
+              </div>
+              ${centroide ? `
+              <div class="miniKpi">
+                <div class="kpi__label">📍 Centroide</div>
+                <div class="kpi__value">${centroide.lat.toFixed(5)}, ${centroide.lng.toFixed(5)}</div>
+              </div>
+              ` : ""}
+            </div>
           </div>
 
           <div class="groupAttrs">
@@ -1216,8 +1213,8 @@ function renderGroupCard(link, clickLat, clickLng, index) {
         <div class="groupTitle__sub">${data.nombre}</div>
       </div>
       <div class="groupMeta">
-        <div class="badgeMini ${dictamen.class}">${dictamen.text}</div>
-        <div class="badgeMini">${isInside ? "0 km" : distKm}</div>
+        <div class="badgeMini ${dictamen.class}">🧭 ${dictamen.text}</div>
+        <div class="badgeMini">${isInside ? "0.00 km" : borderKm}</div>
         <div class="groupChevron">▼</div>
       </div>
     </div>
@@ -1248,7 +1245,7 @@ function renderGroupCard(link, clickLat, clickLng, index) {
 
       if (!isHidden && !groupMaps[mapId]) {
         setTimeout(() => {
-          initGroupMap(mapId, clickLat, clickLng, link.feature, distanceM);
+          initGroupMap(mapId, clickLat, clickLng, link.feature, link.distance_m);
         }, 100);
       }
     });
@@ -1259,16 +1256,15 @@ function renderGroupCard(link, clickLat, clickLng, index) {
    Renderizar tarjeta LITE (>300 km) SIN MAPA (solo info relevante)
 =========================== */
 function renderGroupCardLite(link, index) {
-  const dictamen = getDictamen(link.link_type);
-  const distanceM = link.distance_m;
+  const distanceBorderKm = isFinite(link.distance_border_m) ? (link.distance_border_m / 1000) : null;
+  const dictamen = getDictamen(link.link_type, distanceBorderKm);
   const distanceBorderM = link.distance_border_m;
   const data = extractGroupData(link);
 
   const groupId = `far-${index}`;
   const bodyId = `body-${groupId}`;
 
-  const distKm = distanceM != null ? fmtKm(distanceM) : "—";
-  const borderKm = distanceBorderM != null ? fmtKm(distanceBorderM) : null;
+  const borderKm = isFinite(distanceBorderM) ? fmtKm(distanceBorderM) : "—";
   const isInside = link.link_type === "inside";
 
   let bodyHTML = `
@@ -1277,19 +1273,17 @@ function renderGroupCardLite(link, index) {
         <div class="groupSide" style="max-width: 100%;">
           <div class="groupKpis">
             <div>
-              <div class="kpi__label">Dictamen</div>
+              <div class="kpi__label">🧭 Dictamen</div>
               <div class="badge badge--${dictamen.class}">${dictamen.text}</div>
             </div>
             <div>
-              <div class="kpi__label">Distancia mínima</div>
-              <div class="kpi__value">${isInside ? "0 km (dentro)" : distKm}</div>
+              <div class="kpi__label">📏 Distancia al borde</div>
+              <div class="kpi__value">${isInside ? "0.00 km (dentro)" : borderKm}</div>
             </div>
-            ${borderKm && link.link_type !== "none" ? `
             <div>
-              <div class="kpi__label">Distancia al borde</div>
-              <div class="kpi__value">${borderKm}</div>
+              <div class="kpi__label">🎯 Distancia al centroide</div>
+              <div class="kpi__value">—</div>
             </div>
-            ` : ""}
             <div>
               <div class="kpi__label">Visualización</div>
               <div class="kpi__value"><span class="muted">&gt; 300 km (sin mapa)</span></div>
@@ -1332,8 +1326,8 @@ function renderGroupCardLite(link, index) {
         <div class="groupTitle__sub">${data.nombre}</div>
       </div>
       <div class="groupMeta">
-        <div class="badgeMini ${dictamen.class}">${dictamen.text}</div>
-        <div class="badgeMini">${isInside ? "0 km" : distKm}</div>
+        <div class="badgeMini ${dictamen.class}">🧭 ${dictamen.text}</div>
+        <div class="badgeMini">${isInside ? "0.00 km" : borderKm}</div>
         <div class="badgeMini muted" style="opacity:0.9;">sin mapa</div>
         <div class="groupChevron">▶</div>
       </div>
@@ -1656,7 +1650,7 @@ function buildMainMapKmlFromStorage() {
     const distTxt =
       link.link_type === "inside"
         ? "Dentro del área"
-        : (isFinite(link.distance_m) ? `Distancia mínima: ${(link.distance_m / 1000).toFixed(2)} km` : "");
+        : (isFinite(link.distance_border_m) ? `Distancia al borde: ${(link.distance_border_m / 1000).toFixed(2)} km` : "");
 
     placemarks.push(
       placemarkKml({

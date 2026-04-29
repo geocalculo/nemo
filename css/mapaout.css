@@ -220,7 +220,10 @@ body{
 }
 .badge--neutral{background: rgba(255,255,255,0.55)}
 .badge--in{background: rgba(34,197,94,0.14); border-color: rgba(34,197,94,0.30)}
+.badge--critical{background: rgba(239,68,68,0.16); border-color: rgba(239,68,68,0.35)}
+.badge--near{background: rgba(245,158,11,0.16); border-color: rgba(245,158,11,0.32)}
 .badge--prox{background: rgba(245,158,11,0.14); border-color: rgba(245,158,11,0.30)}
+.badge--far{background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.30)}
 .badge--out{background: rgba(239,68,68,0.10); border-color: rgba(239,68,68,0.22)}
 
 .rowBtns{display:flex; gap:10px; flex-wrap:wrap}
@@ -265,7 +268,11 @@ body{
   opacity:.95;
 }
 .badgeMini.in{background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.28)}
+.badgeMini.critical{background: rgba(239,68,68,0.16); border-color: rgba(239,68,68,0.32)}
+.badgeMini.near{background: rgba(245,158,11,0.16); border-color: rgba(245,158,11,0.32)}
 .badgeMini.prox{background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.28)}
+.badgeMini.far{background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.30)}
+.badgeMini.neutral{background: rgba(255,255,255,0.42)}
 .badgeMini.out{background: rgba(239,68,68,0.10); border-color: rgba(239,68,68,0.22)}
 .badgeMini.none{background: rgba(255,255,255,0.42)}
 
