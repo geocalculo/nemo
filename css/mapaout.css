@@ -205,8 +205,23 @@ body{
 /* KPIs / badges */
 .kpiGrid{display:grid; grid-template-columns: 1fr 1fr; gap:10px}
 .kpiFull{grid-column: 1 / -1;}
-.kpi__label{font-size:.82rem; color:var(--muted2); margin-bottom:6px}
-.kpi__value{font-weight:600; font-size:1.02rem}
+.kpi__label{
+  font-size:.82rem;
+  color:rgba(11,15,13,0.72);
+  margin-bottom:6px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.kpi__label .icon{
+  font-size:0.95rem;
+  opacity:0.9;
+}
+.kpi__value{
+  font-weight:600;
+  font-size:1.08rem;
+  color:rgba(11,15,13,0.92);
+}
 
 .badge{
   display:inline-flex; align-items:center; justify-content:center;
@@ -256,7 +271,10 @@ body{
 .layerRow__left{display:flex; flex-direction:column; gap:4px; min-width:0}
 .layerRow__name{font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 60vw}
 .layerRow__meta{display:flex; gap:8px; flex-wrap:wrap}
-.small{font-size:.82rem; color:var(--muted2)}
+.small{
+  font-size:.82rem;
+  color:rgba(11,15,13,0.65);
+}
 .layerRow__right{display:flex; align-items:center; gap:8px}
 
 .badgeMini{
