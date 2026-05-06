@@ -26,6 +26,9 @@ const TRACK_DEDUPE_WINDOW_MS = 1200;
 const TRACK_SITE = "geonemo";
 const _trackEventCache = new Map();
 const TRACK_DEBUG = new URLSearchParams(window.location.search).has("gtm_debug");
+const PROX_VALUES = [1, 5, 10];
+
+let selectedBufferKm = 5;
 
 if (TRACK_DEBUG) {
   console.log("[GeoNEMO GTM] index.js cargado con tracking");
@@ -512,7 +515,23 @@ function loadOut(){
 }
 
 function openOut(){
-  window.open("mapaout.html", "_blank", "noopener");
+  const outUrl = new URL("mapaout.html", window.location.href);
+  outUrl.searchParams.set("buffer_km", String(selectedBufferKm));
+  window.open(outUrl.toString(), "_blank", "noopener");
+}
+
+function initProximityControl() {
+  const slider = document.getElementById("proxSlider");
+  const proxValue = document.getElementById("proxValue");
+  if (!slider || !proxValue) return;
+
+  const syncProximity = () => {
+    selectedBufferKm = PROX_VALUES[Number(slider.value)] ?? 5;
+    proxValue.textContent = `${selectedBufferKm} km`;
+  };
+
+  slider.addEventListener("input", syncProximity);
+  syncProximity();
 }
 
 /* ===========================
@@ -1927,6 +1946,7 @@ function initWelcomeModal() {
 
   bindUI();
   bindSearchUI();
+  initProximityControl();
   initWelcomeModal();
 
   if (DEBUG_STEP_MODE) {

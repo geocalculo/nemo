@@ -149,6 +149,26 @@ body{
   z-index:1100;
 }
 
+.proximity-control{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding:10px 14px;
+  border-radius:14px;
+  background:rgba(255,255,255,.92);
+  border:1px solid rgba(0,0,0,.08);
+  backdrop-filter:blur(10px);
+  min-width:220px;
+}
+
+.prox-labels{ display:flex; flex-direction:column; }
+.title{ font-size:13px; font-weight:700; }
+.subtitle{ font-size:11px; opacity:.7; }
+.prox-slider-wrap{ display:flex; flex-direction:column; gap:4px; }
+#proxSlider{ width:100%; cursor:pointer; min-height:28px; }
+.prox-steps{ display:flex; justify-content:space-between; font-size:11px; opacity:.72; }
+.prox-value{ align-self:flex-end; font-size:12px; font-weight:700; color:#0f766e; }
+
 select{
   height:38px;
   padding:0 12px;
@@ -787,12 +807,18 @@ body.modal-open{
   .controls-inline{
     order:1;
     width:100%;
+    flex-wrap:wrap;
   }
 
   select{
     min-width:160px;
-    width:100%;
+    width:auto;
     flex:1 1 160px;
+  }
+
+  .proximity-control{
+    width:100%;
+    min-width:0;
   }
 }
 
@@ -867,6 +893,9 @@ body.modal-open{
 
   .controls-inline {
     width: 100%;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
   }
 
   select {
@@ -874,6 +903,18 @@ body.modal-open{
     padding: 0 10px;
     font-size: 13px;
     border-radius: 10px;
+    width:100%;
+    min-width:0;
+  }
+
+  .proximity-control{
+    width:100%;
+    min-width:0;
+    padding:10px 12px;
+  }
+
+  #proxSlider{
+    min-height:34px;
   }
 
   .topbar-kpi {
