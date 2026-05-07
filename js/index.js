@@ -746,7 +746,23 @@ function crearMapa(initialViewport) {
     }
   );
 
+  satOverlay = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    {
+      name: "Satélite",
+      maxZoom: 19,
+      attribution: "Tiles &copy; Esri",
+      crossOrigin: true,
+      updateWhenIdle: true
+    }
+  );
+
   topoBase.addTo(map);
+  L.control.layers({ "OSM": topoBase, "Satélite": satOverlay }, null, {
+    position: "topright",
+    collapsed: false
+  }).addTo(map);
+
   addMyLocationControl();
 
   writeMapPref({
