@@ -27,63 +27,53 @@
   <link rel="stylesheet" href="css/index.css" />
 </head>
 <body>
-
   <!-- Google Tag Manager (noscript) -->
   <noscript>
-    <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-PDTL4LG2"
-      height="0" width="0" style="display:none;visibility:hidden"></iframe>
+    <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-PDTL4LG2" height="0" width="0" style="display:none;visibility:hidden"></iframe>
   </noscript>
   <!-- End Google Tag Manager (noscript) -->
-
-
 
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand-inline">
-        <div class="logo-box">🌿</div>
-
+        <div class="logo-box">🛡️</div>
         <div class="brand-text">
-          <div class="brand-name">GeoNEMO | Áreas Protegidas en Chile</div>
-          <div class="brand-tagline">
-            Áreas protegidas y restricciones territoriales en Chile
-          </div>
+          <div class="brand-name">GeoNEMO</div>
+          <div class="brand-subtitle">Áreas Protegidas en Chile</div>
+          <div class="brand-tagline">Sitios protegidos, restricciones y sensibilidad territorial</div>
         </div>
       </div>
 
-      <div class="topbar-right">
-        <div class="topbar-kpi">
-          <span>📊 En vista actual:</span>
+      <div class="summary-panel" aria-label="Resumen de sitios en vista">
+        <article class="kpi-card">
+          <span class="kpi-label">Sitios en vista</span>
           <strong id="groupSummaryTotalN_top">—</strong>
-          <span>sitios</span>
-          <span>·</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Superficie protegida</span>
           <strong id="groupSummaryTotalArea_top">—</strong>
-        </div>
+        </article>
+      </div>
 
-        <div class="controls-inline">
+      <div class="controls-inline">
+        <div class="region-card">
+          <label for="selRegion">Región</label>
           <select id="selRegion">
             <option value="">Selecciona región…</option>
           </select>
-          <div class="proximity-control">
-            <div class="prox-labels">
-              <span class="title">Alerta de proximidad</span>
-              <span class="subtitle">Configura la distancia de análisis territorial.</span>
-            </div>
-            <div class="prox-slider-wrap">
-              <input
-                type="range"
-                id="proxSlider"
-                min="0"
-                max="2"
-                step="1"
-                value="1"
-                aria-label="Distancia de alerta de proximidad"
-              />
-              <div class="prox-steps">
-                <span>1 km</span>
-                <span>5 km</span>
-                <span>10 km</span>
-              </div>
-              <div id="proxValue" class="prox-value">5 km</div>
+        </div>
+
+        <div class="proximity-control">
+          <div class="prox-labels">
+            <span class="title">Alerta de proximidad</span>
+            <span id="proxValue" class="prox-value">5 km</span>
+          </div>
+          <div class="prox-slider-wrap">
+            <input type="range" id="proxSlider" min="0" max="2" step="1" value="1" aria-label="Distancia de alerta de proximidad" />
+            <div class="prox-steps">
+              <span>1 km</span>
+              <span>5 km</span>
+              <span>10 km</span>
             </div>
           </div>
         </div>
@@ -91,169 +81,78 @@
     </div>
   </header>
 
-  <div id="map-hint-cursor" class="map-hint">
-    Haz clic en el mapa para explorar áreas protegidas
-  </div>
+  <div id="map-hint-cursor" class="map-hint">Haz clic en el mapa para abrir el CARD PRO del punto consultado.</div>
 
-  <!-- Resumen por grupo oculto, conservando IDs para espejo en topbar -->
   <div class="sr-summary" aria-hidden="true">
     <table>
-      <tbody id="groupSummaryBody">
-        <tr><td colspan="3" class="muted">—</td></tr>
-      </tbody>
-      <tfoot>
-        <tr>
-          <td>TOTAL</td>
-          <td id="groupSummaryTotalN">—</td>
-          <td id="groupSummaryTotalArea">—</td>
-        </tr>
-      </tfoot>
+      <tbody id="groupSummaryBody"><tr><td colspan="3" class="muted">—</td></tr></tbody>
+      <tfoot><tr><td>TOTAL</td><td id="groupSummaryTotalN">—</td><td id="groupSummaryTotalArea">—</td></tr></tfoot>
     </table>
   </div>
 
   <main class="main">
-    <div class="layout-home">
-      <section class="map-column">
-        <section class="mapwrap">
-          <div id="map"></div>
-          <div id="mapSearch" class="map-search" role="search">
-            <label for="mapSearchInput" class="sr-only">Buscar sitios</label>
-            <input
-              id="mapSearchInput"
-              type="search"
-              autocomplete="off"
-              placeholder="Buscar sitio protegido, humedal, salar, parque..."
-            />
-            <ul id="mapSearchResults" class="map-search-results" aria-live="polite"></ul>
-          </div>
-          <div id="toast" class="toast" aria-live="polite"></div>
-        </section>
-      </section>
-    </div>
+    <section class="mapwrap">
+      <div id="map"></div>
+      <div id="mapSearch" class="map-search" role="search">
+        <label for="mapSearchInput" class="sr-only">Buscar sitios</label>
+        <input id="mapSearchInput" type="search" autocomplete="off" placeholder="Buscar sitio protegido, humedal, salar, parque..." />
+        <ul id="mapSearchResults" class="map-search-results" aria-live="polite"></ul>
+      </div>
+      <div id="toast" class="toast" aria-live="polite"></div>
+    </section>
   </main>
 
-  <a
-    class="ecosystem-card left geoipt"
-    href="#"
-    onclick="return goToGeoIPT(event)"
-  >
-    <span class="ecosystem-card-title">GeoIPT</span>
-    <span class="ecosystem-card-text">Consulta normativa urbana, PRC y usos de suelo directamente sobre el mapa.</span>
-  </a>
+  <nav class="geo-switch" id="geo-switch" aria-label="GeoSwitch">
+    <a data-site="geoipt" href="#" onclick="return goToGeoIPT(event)">
+      <span class="site-icon">🧭</span><span class="site-main">GeoIPT</span><span class="site-sub">Planificación urbana</span>
+    </a>
+    <a data-site="geoeva" href="#" onclick="return goToGeoEVA(event)">
+      <span class="site-icon">🌿</span><span class="site-main">GeoEVA</span><span class="site-sub">Evaluación ambiental</span>
+    </a>
+    <a data-site="geonemo" class="active" href="#">
+      <span class="site-icon">🛡️</span><span class="site-main">GeoNEMO</span><span class="site-sub">Sitios protegidos</span>
+    </a>
+    <a data-site="geonoxa" href="https://geonoxa.cl/?utm_source=geonemo&utm_medium=ribbon&utm_campaign=cruce_portales&utm_content=geonoxa">
+      <span class="site-icon">⚠️</span><span class="site-main">GeoNOXA</span><span class="site-sub">Riesgo territorial</span>
+    </a>
+  </nav>
 
-  <a
-    class="ecosystem-card right geoeva"
-    href="#"
-    onclick="return goToGeoEVA(event)"
-  >
-    <span class="ecosystem-card-title">GeoEVA</span>
-    <span class="ecosystem-card-text">Visualiza proyectos del SEA cercanos al área visible, su estado ambiental y contexto territorial.</span>
-  </a>
+  <div id="visitor-counter">Visitas:
+    <img src="https://api.visitorbadge.io/api/visitors?path=geonemo.cl&countColor=%2322c55e" alt="contador visitas" style="vertical-align:middle;">
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
   <script src="js/index.js?v=gtm-events-20260425"></script>
 
-  <!-- Espejo de totales en topbar -->
   <script>
     (function () {
       const totalN = document.getElementById('groupSummaryTotalN');
       const totalArea = document.getElementById('groupSummaryTotalArea');
       const totalNTop = document.getElementById('groupSummaryTotalN_top');
       const totalAreaTop = document.getElementById('groupSummaryTotalArea_top');
-
       if (!totalN || !totalArea || !totalNTop || !totalAreaTop) return;
-
       const syncTotals = () => {
         totalNTop.textContent = totalN.textContent || '—';
         totalAreaTop.textContent = totalArea.textContent || '—';
       };
-
       syncTotals();
-
       const observer = new MutationObserver(syncTotals);
       observer.observe(totalN, { childList: true, subtree: true, characterData: true });
       observer.observe(totalArea, { childList: true, subtree: true, characterData: true });
     })();
   </script>
 
-  <!-- Fix viewport -->
-  <script>
-    window.addEventListener('load', function () {
-      setTimeout(function () {
-  //      var el = document.getElementById('map');
-  //      if (el && el._leaflet_map) {
-  //        el._leaflet_map.invalidateSize(false);
-  //      }
-      }, 300);
-    });
-  </script>
-
-  <!-- Contador de visitas -->
-  <div id="visitor-counter" style="
-    position:fixed;
-    bottom:10px;
-    right:12px;
-    font-size:12px;
-    font-family:Inter, Arial, sans-serif;
-    color:#9ca3af;
-    background:rgba(0,0,0,0.6);
-    padding:6px 10px;
-    border-radius:8px;
-    backdrop-filter: blur(6px);
-    z-index:9999;
-  ">
-    Visitas:
-    <img
-      src="https://api.visitorbadge.io/api/visitors?path=geonemo.cl&countColor=%2322c55e"
-      alt="contador visitas"
-      style="vertical-align:middle;">
+  <div id="welcomeModal" class="welcome-modal" hidden role="dialog" aria-modal="true" aria-labelledby="welcomeModalTitle">
+    <div class="welcome-modal__content">
+      <h2 id="welcomeModalTitle">Detecta áreas protegidas y restricciones ambientales antes de avanzar</h2>
+      <p class="welcome-modal__lead">Haz clic en cualquier punto del mapa y GeoNEMO revisa el entorno territorial: áreas protegidas, humedales, salares, parques y zonas sensibles.</p>
+      <img class="modal-3-pasos" src="assets/modal-3-pasos.png" alt="Flujo GeoNEMO: mapa, clic, análisis territorial y descarga KML" loading="eager" />
+      <p class="welcome-modal__support">Obtén contexto inmediato y descarga geometrías KML para continuar tu análisis en GIS.</p>
+      <button id="startBtn" class="welcome-btn" type="button">Explorar GeoNEMO</button>
+      <br><br>
+      <label class="welcome-checkbox"><input type="checkbox" id="dontShowAgain">No mostrar nuevamente</label>
+    </div>
   </div>
-
-  <div id="ecosystem-bar">
-    <a href="#" onclick="return goToGeoIPTMobile(event)">
-      GeoIPT.cl
-    </a>
-    <a href="#" onclick="return goToGeoEVAMobile(event)">
-      GeoEVA.cl
-    </a>
-  </div>
-
-<div id="welcomeModal" class="welcome-modal" hidden role="dialog" aria-modal="true" aria-labelledby="welcomeModalTitle">
-  <div class="welcome-modal__content">
-
-
-    <h2 id="welcomeModalTitle">
-      Detecta áreas protegidas y restricciones ambientales antes de avanzar
-    </h2>
-
-    <p class="welcome-modal__lead">
-      Haz clic en cualquier punto del mapa y GeoNEMO revisa el entorno territorial:
-      áreas protegidas, humedales, salares, parques y zonas sensibles.
-    </p>
-
-    <img
-      class="modal-3-pasos"
-      src="assets/modal-3-pasos.png"
-      alt="Flujo GeoNEMO: mapa, clic, análisis territorial y descarga KML"
-      loading="eager"
-    />
-
-    <p class="welcome-modal__support">
-      Obtén contexto inmediato y descarga geometrías KML para continuar tu análisis en GIS.
-    </p>
-
-    <button id="startBtn" class="welcome-btn" type="button">
-      Explorar GeoNEMO
-    </button>
-    <br><br>
-    <label class="welcome-checkbox">
-      <input type="checkbox" id="dontShowAgain">
-      No mostrar nuevamente
-    </label>
-
-  </div>
-</div>
-
 </body>
 </html>
