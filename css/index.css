@@ -45,8 +45,9 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
 .prox-steps{display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted)}
 .proximity-control--floating{
   position:absolute;
-  top:108px;
-  left:10px;
+  top:50%;
+  left:16px;
+  transform:translateY(-50%);
   width:min(260px,calc(100% - 20px));
   z-index:620;
   background:rgba(248,252,249,.82);
@@ -112,7 +113,7 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
   .brand-tagline{display:none}
   .topbar-inner{padding:8px 10px;grid-template-columns:1fr;gap:7px}
   .summary-panel{grid-template-columns:1fr 1fr}
-  .proximity-control--floating{top:72px;left:8px;right:auto;width:min(220px,calc(100vw - 16px));padding:7px 8px}
+  .proximity-control--floating{top:50%;left:16px;right:auto;transform:translateY(-50%);width:min(220px,calc(100vw - 24px));padding:7px 8px}
   .map-search{top:16px;width:calc(100vw - 24px)}
   .geo-switch{gap:6px;padding:8px}
   .site-sub{display:none}
@@ -122,7 +123,7 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
   :root{--header-h:156px;--ribbon-h:74px}
   .logo-box{display:none}
   .kpi-card strong{font-size:1rem}
-  .proximity-control--floating{top:66px;left:8px;width:min(200px,calc(100vw - 16px))}
+  .proximity-control--floating{top:50%;left:16px;transform:translateY(-50%);width:min(200px,calc(100vw - 24px))}
   .proximity-control--floating .prox-steps{display:none}
 }
 
