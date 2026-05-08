@@ -28,11 +28,7 @@ const _trackEventCache = new Map();
 const TRACK_DEBUG = new URLSearchParams(window.location.search).has("gtm_debug");
 const PROX_VALUES = [1, 5, 10];
 
-let currentBufferKm = 10;
-
-function getCurrentBufferMeters() {
-  return currentBufferKm * 1000;
-}
+let currentBufferKm = 5;
 
 if (TRACK_DEBUG) {
   console.log("[GeoNEMO GTM] index.js cargado con tracking");
@@ -45,8 +41,6 @@ let _debugStep = 0;
 let map;
 let userMarker = null;
 let clickMarker = null;
-let clickBufferCircle = null;
-let lastClickLatLng = null;
 
 let topoBase = null;
 let satOverlay = null;
@@ -532,20 +526,8 @@ function initProximityControl() {
   if (!slider || !proxValue) return;
 
   const syncProximity = () => {
-    currentBufferKm = PROX_VALUES[Number(slider.value)] ?? 10;
-    const currentBufferMeters = getCurrentBufferMeters();
+    currentBufferKm = PROX_VALUES[Number(slider.value)] ?? 5;
     proxValue.textContent = `${currentBufferKm} km`;
-
-    if (clickBufferCircle) {
-      clickBufferCircle.setRadius(currentBufferMeters);
-      clickBufferCircle.bindTooltip(`Radio real: ${currentBufferKm} km`);
-    }
-
-    console.log("BUFFER:", currentBufferKm, "km →", currentBufferMeters, "m");
-
-    if (lastClickLatLng) {
-      onMapClick({ latlng: lastClickLatLng }, { openResultWindow: false });
-    }
   };
 
   slider.addEventListener("input", syncProximity);
@@ -1758,8 +1740,7 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
 /* ===========================
    Click: siempre abre mapaout.html
 =========================== */
-async function onMapClick(e, options = {}){
-  const { openResultWindow = true } = options;
+async function onMapClick(e){
   if (!assertTurfReady()) return;
 
   const lat = e.latlng.lat;
@@ -1773,24 +1754,9 @@ async function onMapClick(e, options = {}){
   }, { dedupeKey: `geo_click_map:${lat.toFixed(6)}:${lng.toFixed(6)}` });
 
   if (clickMarker) map.removeLayer(clickMarker);
-  if (clickBufferCircle) map.removeLayer(clickBufferCircle);
   clickMarker = L.circleMarker([lat, lng], {
     radius: 7, weight: 2, opacity: 1, fillOpacity: 0.25
   }).addTo(map);
-
-  lastClickLatLng = { lat, lng };
-  const currentBufferMeters = getCurrentBufferMeters();
-
-  clickBufferCircle = L.circle([lat, lng], {
-    radius: currentBufferMeters,
-    color: "#2d7ff9",
-    weight: 2,
-    fillColor: "#2d7ff9",
-    fillOpacity: 0.08
-  }).addTo(map);
-  clickBufferCircle.bindTooltip(`Radio real: ${currentBufferKm} km`);
-
-  console.log("BUFFER:", currentBufferKm, "km →", currentBufferMeters, "m");
 
   const pt = turf.point([lng, lat]);
 
@@ -1815,18 +1781,12 @@ async function onMapClick(e, options = {}){
     }
   }
 
-  const filteredResults = results.filter((r) => {
-    if (r.link_type === "inside") return true;
-    if (!isFinite(r.distance_m)) return false;
-    return r.distance_m <= currentBufferMeters;
-  });
-
-  const insideCount = filteredResults.filter(x => x.link_type === "inside").length;
+  const insideCount = results.filter(x => x.link_type === "inside").length;
   toast(insideCount ? `✅ Dentro en ${insideCount} grupo(s)` : "📍 Vinculación por proximidad al perímetro", 1600);
 
   const prev = loadOut() || {};
 
-  const legacyLinks = filteredResults.map(r => ({
+  const legacyLinks = results.map(r => ({
     layer_id: r.group_id,
     layer_name: r.group_name,
     link_type: r.link_type,
@@ -1843,12 +1803,11 @@ async function onMapClick(e, options = {}){
     updated_at: nowIso(),
     click: { lat, lng },
     buffer_km: currentBufferKm,
-    buffer_m: currentBufferMeters,
-    groups: filteredResults,
+    groups: results,
     links: legacyLinks
   });
 
-  if (openResultWindow) openOut();
+  openOut();
 }
 
 /* ===========================
