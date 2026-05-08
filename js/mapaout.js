@@ -24,7 +24,9 @@ const TRACK_DEDUPE_WINDOW_MS = 1200;
 const TRACK_SITE = "geonemo";
 const _trackEventCache = new Map();
 let resultEventSent = false;
-const TRACK_DEBUG = new URLSearchParams(window.location.search).has("gtm_debug");
+const urlParams = new URLSearchParams(window.location.search);
+const TRACK_DEBUG = urlParams.has("gtm_debug");
+const currentBufferKm = Number(urlParams.get("buffer_km")) || 5;
 
 if (TRACK_DEBUG) {
   console.log("[GeoNEMO GTM] mapaout.js cargado con tracking");
@@ -898,6 +900,12 @@ function generarResumenAreas(lat, lng, links) {
       </div>
     `;
   }
+
+  mainHTML += `
+    <div class="muted" style="margin-top:10px;">
+      Considerando un radio de alerta territorial de <strong>${currentBufferKm} km</strong>, este valor se muestra como referencia visual del punto consultado.
+    </div>
+  `;
 
   mainHTML += `</div>`;
   resumenEl.innerHTML = mainHTML;
