@@ -26,9 +26,6 @@ const TRACK_DEDUPE_WINDOW_MS = 1200;
 const TRACK_SITE = "geonemo";
 const _trackEventCache = new Map();
 const TRACK_DEBUG = new URLSearchParams(window.location.search).has("gtm_debug");
-const PROX_VALUES = [1, 5, 10];
-
-let currentBufferKm = 5;
 
 if (TRACK_DEBUG) {
   console.log("[GeoNEMO GTM] index.js cargado con tracking");
@@ -516,22 +513,7 @@ function loadOut(){
 
 function openOut(){
   const outUrl = new URL("mapaout.html", window.location.href);
-  outUrl.searchParams.set("buffer_km", String(currentBufferKm));
   window.open(outUrl.toString(), "_blank", "noopener");
-}
-
-function initProximityControl() {
-  const slider = document.getElementById("proxSlider");
-  const proxValue = document.getElementById("proxValue");
-  if (!slider || !proxValue) return;
-
-  const syncProximity = () => {
-    currentBufferKm = PROX_VALUES[Number(slider.value)] ?? 5;
-    proxValue.textContent = `${currentBufferKm} km`;
-  };
-
-  slider.addEventListener("input", syncProximity);
-  syncProximity();
 }
 
 /* ===========================
@@ -1782,7 +1764,7 @@ async function onMapClick(e){
   }
 
   const insideCount = results.filter(x => x.link_type === "inside").length;
-  toast(insideCount ? `✅ Dentro en ${insideCount} grupo(s)` : "📍 Vinculación por proximidad al perímetro", 1600);
+  toast(insideCount ? `✅ Dentro en ${insideCount} grupo(s)` : "📍 Sin coincidencias en grupos activos", 1600);
 
   const prev = loadOut() || {};
 
@@ -1802,7 +1784,6 @@ async function onMapClick(e){
     created_at: prev.created_at || nowIso(),
     updated_at: nowIso(),
     click: { lat, lng },
-    buffer_km: currentBufferKm,
     groups: results,
     links: legacyLinks
   });
@@ -1963,7 +1944,6 @@ function initWelcomeModal() {
 
   bindUI();
   bindSearchUI();
-  initProximityControl();
   initWelcomeModal();
 
   if (DEBUG_STEP_MODE) {
