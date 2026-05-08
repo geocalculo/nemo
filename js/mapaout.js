@@ -159,7 +159,6 @@ let groupLayers = {}; // { groupId: leaflet layer }
 let mainMapBounds = null; // Guardar bounds originales para recentrar
 
 let mainLabelLayers = [];
-let mainPulseLayers = [];
 let labelsVisible = true;
 
 
@@ -618,35 +617,6 @@ function applyMainMapMonochrome(mainMapInstance) {
   } catch (_) {}
 }
 
-function addPulsingPerimeter(map, feature, bufferMeters = 250) {
-  if (!map || !feature) return null;
-
-  let outline = feature;
-
-  // Buffer chico para que el perímetro se note (si hay Turf)
-  if (HAS_TURF && turf?.buffer) {
-    try {
-      outline = turf.buffer(feature, bufferMeters, { units: "meters" });
-    } catch (_) {
-      outline = feature;
-    }
-  }
-
-  const layer = L.geoJSON(outline, {
-    style: () => ({
-      className: "pulse-perimeter",
-      // dejamos valores base por si el browser no aplica CSS:
-      color: "#bef264",
-      weight: 5,
-      fillOpacity: 0,
-      opacity: 0.95
-    }),
-    interactive: false
-  }).addTo(map);
-
-  return layer;
-}
-
 function addGroupLabel(map, feature, text) {
   if (!HAS_TURF || !feature || !text) return null;
   try {
@@ -676,7 +646,6 @@ window.toggleMainLabels = function () {
 
 function initMainMap(lat, lng, links) {
   mainLabelLayers = [];
-  mainPulseLayers = [];
 
   mainMap = L.map("map", { zoomControl: true, preferCanvas: true })
     .setView([lat, lng], 12);
@@ -736,26 +705,17 @@ function initMainMap(lat, lng, links) {
     const { feature, distance_m } = link;
     if (!feature || !isFinite(distance_m) || distance_m > MAX_DISTANCE_FOR_DRAW) return;
 
-    let color = "#22c55e";
-    let fillOpacity = 0.14;
-
-    if (link.link_type === "inside") {
-      fillOpacity = 0.22;
-    } else if (link.link_type === "nearest_perimeter") {
-      color = "#f59e0b";
-    }
-
     const poly = L.geoJSON(feature, {
-      style: { color, weight: 2, fillColor: color, fillOpacity }
+      style: {
+        color: "#f59e0b",
+        weight: 2,
+        opacity: 0.9,
+        fillColor: "#f59e0b",
+        fillOpacity: 0.14
+      }
     }).addTo(mainMap);
 
     try { bounds.extend(poly.getBounds()); } catch (e) {}
-
-    const pulse = addPulsingPerimeter(mainMap, feature, 250);
-    if (pulse) {
-      mainPulseLayers.push(pulse);
-      try { bounds.extend(pulse.getBounds()); } catch (e) {}
-    }
 
     const labelText = link.layer_id;
     const tag = addGroupLabel(mainMap, feature, labelText);
@@ -929,10 +889,11 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
   if (feature && distanceM != null && distanceM <= MAX_DISTANCE_FOR_DRAW) {
     layer = L.geoJSON(feature, {
       style: {
-        color: "#22c55e",
+        color: "#f59e0b",
         weight: 2,
-        fillColor: "#22c55e",
-        fillOpacity: 0.15,
+        opacity: 0.9,
+        fillColor: "#f59e0b",
+        fillOpacity: 0.14,
       },
     }).addTo(map);
 
