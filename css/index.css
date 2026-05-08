@@ -45,7 +45,7 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
 .prox-steps{display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted)}
 .proximity-control--floating{
   position:absolute;
-  top:84px;
+  top:108px;
   left:10px;
   width:min(260px,calc(100% - 20px));
   z-index:620;
