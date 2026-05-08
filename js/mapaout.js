@@ -20,6 +20,11 @@
 
 const STORAGE_KEY = "geonemo_out_v2";
 const MAX_DISTANCE_FOR_DRAW = 300000; // 300 km - más allá no dibujamos geometría
+const currentBufferKm = (() => {
+  const params = new URLSearchParams(window.location.search);
+  const raw = Number(params.get("buffer_km"));
+  return Number.isFinite(raw) && raw > 0 ? raw : 5;
+})();
 const TRACK_DEDUPE_WINDOW_MS = 1200;
 const TRACK_SITE = "geonemo";
 const _trackEventCache = new Map();
@@ -864,7 +869,7 @@ function generarResumenAreas(lat, lng, links) {
   if (inside) {
     const p = pickPhrase(inside);
     mainHTML += `
-      <strong>Para este punto, lo más relevante es que ${p.text}.</strong>
+      Considerando un radio de alerta territorial de <strong>${currentBufferKm} km</strong> alrededor del punto consultado, lo más relevante es que ${p.text}.
     `;
     const next = near.find((l) => l !== inside);
     if (next) {
@@ -874,7 +879,7 @@ function generarResumenAreas(lat, lng, links) {
   } else if (first) {
     const p1 = pickPhrase(first);
     mainHTML += `
-      <strong>Para este punto, lo más relevante es que la referencia protegida más cercana corresponde al grupo <strong>${p1.grupoNombre}</strong>:</strong>
+      Considerando un radio de alerta territorial de <strong>${currentBufferKm} km</strong> alrededor del punto consultado, lo más relevante es que la referencia protegida más cercana corresponde al grupo <strong>${p1.grupoNombre}</strong>:
       <em>${p1.areaNombre}</em>, ubicada a <strong>${(first.distance_m / 1000).toFixed(2)} km</strong>${p1.kind === "near" ? (p1.text.includes("hacia el") ? p1.text.slice(p1.text.indexOf(" hacia")) : "") : ""}.
     `;
     if (second) {
