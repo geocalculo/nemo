@@ -62,14 +62,7 @@
             <option value="">Selecciona región…</option>
           </select>
         </div>
-        <div class="radius-card" aria-label="Radio de búsqueda territorial">
-          <span class="radius-card__title">Radio de búsqueda territorial</span>
-          <div class="searchRadiusGroup" id="searchRadiusGroup">
-            <label><input type="radio" name="searchRadius" value="25" checked> Local (25 km)</label>
-            <label><input type="radio" name="searchRadius" value="100"> Regional (100 km)</label>
-            <label><input type="radio" name="searchRadius" value="250"> Macro (250 km)</label>
-          </div>
-        </div>
+
       </div>
     </div>
   </header>
@@ -92,6 +85,32 @@
         <ul id="mapSearchResults" class="map-search-results" aria-live="polite"></ul>
       </div>
       <div id="toast" class="toast" aria-live="polite"></div>
+      <aside class="territorial-panel is-collapsed" id="territorialPanel" aria-label="Panel territorial">
+        <button class="territorial-panel__toggle" id="territorialPanelToggle" type="button" aria-expanded="false" aria-controls="territorialPanelBody">
+          <span class="territorial-panel__chevron">▾</span>
+          <span>PANEL TERRITORIAL</span>
+        </button>
+        <div class="territorial-panel__body" id="territorialPanelBody" hidden>
+          <section class="territorial-block">
+            <h3>Escala territorial (radio de búsqueda)</h3>
+            <div class="searchRadiusGroup" id="searchRadiusGroup">
+              <label><input type="radio" name="searchRadius" value="25" checked> Local (25 km)</label>
+              <label><input type="radio" name="searchRadius" value="100"> Regional (100 km)</label>
+              <label><input type="radio" name="searchRadius" value="250"> Macro (250 km)</label>
+            </div>
+          </section>
+          <section class="territorial-block">
+            <h3>Etiquetas en el mapa</h3>
+            <div class="mapLabelGroup" id="mapLabelGroup">
+              <label><input type="radio" name="mapLabels" value="none" checked> Sin etiquetas</label>
+              <label><input type="radio" name="mapLabels" value="name"> Nombre</label>
+              <label><input type="radio" name="mapLabels" value="type"> Tipo</label>
+              <label><input type="radio" name="mapLabels" value="system"> Sistema</label>
+            </div>
+          </section>
+          <p class="territorial-note">El radio define qué sitios se analizan y el framing del mapa.</p>
+        </div>
+      </aside>
     </section>
   </main>
 

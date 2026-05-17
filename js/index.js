@@ -20,6 +20,8 @@ const OUT_STORAGE_KEY = "geonemo_out_v2";
 const SEARCH_RADIUS_STORAGE_KEY = "geonemo_search_radius";
 const SEARCH_RADIUS_VALUES = [25, 100, 250];
 const MAP_PREF_KEY = "geonemo_map_pref";
+const MAP_LABEL_STORAGE_KEY = "geonemo_map_labels";
+const MAP_LABEL_VALUES = ["none", "name", "type", "system"];
 const GROUPS_URL = "capas/grupos.json";
 
 // debug: si true, muestra en consola info detallada de cada paso (carga, stats, click, etc).
@@ -530,6 +532,51 @@ function resolveSearchRadiusKm() {
   if (fromUrl != null) return fromUrl;
   const fromStorage = sanitizeSearchRadiusKm(localStorage.getItem(SEARCH_RADIUS_STORAGE_KEY));
   return fromStorage ?? 25;
+}
+
+
+function resolveMapLabelMode() {
+  const stored = String(localStorage.getItem(MAP_LABEL_STORAGE_KEY) || "none").toLowerCase();
+  return MAP_LABEL_VALUES.includes(stored) ? stored : "none";
+}
+
+function initMapLabelUI() {
+  const root = document.getElementById("mapLabelGroup");
+  if (!root) return;
+  const active = resolveMapLabelMode();
+  localStorage.setItem(MAP_LABEL_STORAGE_KEY, active);
+  root.querySelectorAll("input[name='mapLabels']").forEach((radio) => {
+    const val = String(radio.value || "none").toLowerCase();
+    radio.checked = val === active;
+    radio.addEventListener("change", () => {
+      const next = MAP_LABEL_VALUES.includes(val) ? val : "none";
+      localStorage.setItem(MAP_LABEL_STORAGE_KEY, next);
+    });
+  });
+}
+
+function initTerritorialPanelUI() {
+  const panel = document.getElementById("territorialPanel");
+  const toggle = document.getElementById("territorialPanelToggle");
+  const body = document.getElementById("territorialPanelBody");
+  if (!panel || !toggle || !body) return;
+
+  const key = "geonemo_territorial_panel_collapsed";
+  const isMobile = window.matchMedia("(max-width: 720px)").matches;
+  const stored = localStorage.getItem(key);
+  const startCollapsed = stored == null ? isMobile : stored === "true";
+
+  const apply = (collapsed) => {
+    panel.classList.toggle("is-collapsed", collapsed);
+    body.hidden = collapsed;
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    localStorage.setItem(key, String(collapsed));
+  };
+
+  apply(startCollapsed);
+  toggle.addEventListener("click", () => {
+    apply(!panel.classList.contains("is-collapsed"));
+  });
 }
 
 function initSearchRadiusUI() {
@@ -1980,7 +2027,9 @@ function initWelcomeModal() {
   }
 
   bindUI();
+  initTerritorialPanelUI();
   initSearchRadiusUI();
+  initMapLabelUI();
   bindSearchUI();
   initWelcomeModal();
 

@@ -35,8 +35,6 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
 .region-card label{font-size:.74rem;color:var(--muted);display:block;margin-bottom:6px}
 #regionDummy{}
 #selRegion{height:34px;width:100%;border-radius:10px;border:1px solid var(--border);background:#0f1c1a;color:var(--text);padding:0 10px}
-.radius-card{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:var(--radius);padding:8px 9px}
-.radius-card__title{font-size:.74rem;color:var(--muted);display:block;margin-bottom:6px}
 .searchRadiusGroup{display:grid;grid-template-columns:1fr;gap:4px}
 .searchRadiusGroup label{display:flex;align-items:center;gap:6px;font-size:.78rem;color:#d6e8db;cursor:pointer}
 .searchRadiusGroup input[type="radio"]{accent-color:#73c86b}
@@ -62,6 +60,20 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
 
 /* Map controls */
 .map-overlay-controls.map-overlay-controls--bottom,.leaflet-bottom.leaflet-right{bottom:calc(var(--ribbon-h) + 14px)!important}
+
+
+/* Territorial floating panel */
+.territorial-panel{position:absolute;left:14px;top:88px;z-index:650;width:min(320px,calc(100vw - 28px));background:rgba(15,23,42,.82);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.08);border-radius:14px;box-shadow:0 14px 32px rgba(2,6,23,.38);overflow:hidden}
+.territorial-panel__toggle{width:100%;border:0;background:transparent;color:#f8fafc;padding:11px 13px;display:flex;align-items:center;gap:8px;font-size:.82rem;font-weight:700;letter-spacing:.03em;cursor:pointer;text-align:left}
+.territorial-panel__chevron{font-size:.9rem;transition:transform .2s ease}
+.territorial-panel__body{padding:0 13px 12px}
+.territorial-block{padding:5px 0 9px}
+.territorial-block h3{margin:0 0 8px;font-size:.78rem;color:#d7e0f2;font-weight:600}
+.mapLabelGroup,.searchRadiusGroup{display:grid;gap:5px}
+.mapLabelGroup label,.searchRadiusGroup label{display:flex;align-items:center;gap:6px;font-size:.78rem;color:#d6e8db;cursor:pointer}
+.mapLabelGroup input[type="radio"],.searchRadiusGroup input[type="radio"]{accent-color:#73c86b}
+.territorial-note{margin:3px 0 0;font-size:.72rem;line-height:1.25;color:#9bb2d3}
+.territorial-panel.is-collapsed .territorial-panel__chevron{transform:rotate(-90deg)}
 
 /* Hint */
 .map-hint{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--ribbon-h) + 26px);z-index:900;padding:8px 12px;font-size:12px;border-radius:999px;background:rgba(8,14,13,.9);border:1px solid var(--border);color:#d3e3d8;pointer-events:none}
@@ -91,6 +103,7 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
 }
 @media (max-width:720px){
   :root{--header-h:154px;--ribbon-h:78px}
+  .territorial-panel{top:74px;left:10px;right:10px;width:auto}
   .brand-tagline{display:none}
   .topbar-inner{padding:8px 10px;grid-template-columns:1fr;gap:7px}
   .summary-panel{grid-template-columns:1fr 1fr}
@@ -101,6 +114,7 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
 }
 @media (max-width:390px){
   :root{--header-h:156px;--ribbon-h:74px}
+  .territorial-panel{top:70px}
   .logo-box{display:none}
   .kpi-card strong{font-size:1rem}
 }
