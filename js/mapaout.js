@@ -20,6 +20,7 @@
 
 const STORAGE_KEY = "geonemo_out_v2";
 const MAX_DISTANCE_FOR_DRAW = 300000; // 300 km - más allá no dibujamos geometría
+const SEARCH_RADIUS_VALUES = [25, 100, 250];
 const TRACK_DEDUPE_WINDOW_MS = 1200;
 const TRACK_SITE = "geonemo";
 const _trackEventCache = new Map();
@@ -744,7 +745,7 @@ function initMainMap(lat, lng, links) {
 
   // ✅ Fit final + guardar bounds como COPIA (para que recenter incluya POI)
   const finalBounds = L.latLngBounds(bounds.getSouthWest(), bounds.getNorthEast());
-  mainMap.fitBounds(finalBounds, { padding: [40, 40], maxZoom: 13 });
+  mainMap.fitBounds(finalBounds.pad(0.15), { padding: [40, 40], maxZoom: 11, minZoom: 5 });
   mainMapBounds = finalBounds;
 
   setTimeout(() => mainMap.invalidateSize(true), 100);
@@ -1369,12 +1370,21 @@ function loadAndRender() {
     const data = JSON.parse(raw);
     const click = data.click || {};
     const links = data.links || [];
+    const radiusFromUrl = Number(urlParams.get("search_radius"));
+    const radiusFromData = Number(data.search_radius_km);
+    const searchRadiusKm = SEARCH_RADIUS_VALUES.includes(radiusFromUrl)
+      ? radiusFromUrl
+      : (SEARCH_RADIUS_VALUES.includes(radiusFromData) ? radiusFromData : 25);
+    const searchRadiusM = searchRadiusKm * 1000;
+    const linksInRadius = links.filter((link) =>
+      link?.link_type === "inside" || (Number.isFinite(link?.distance_m) && link.distance_m <= searchRadiusM)
+    );
 
     if (!Number.isFinite(click.lat) || !Number.isFinite(click.lng)) {
       throw new Error("Punto consultado inválido");
     }
 
-    const sorted = links.slice().sort((a, b) => {
+    const sorted = linksInRadius.slice().sort((a, b) => {
       const dA = a.distance_m ?? Infinity;
       const dB = b.distance_m ?? Infinity;
       return dA - dB;
@@ -1396,6 +1406,11 @@ function loadAndRender() {
     const coordsEl = document.getElementById("coordsDisplay");
     if (coordsEl) {
       coordsEl.textContent = `${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}`;
+    }
+    const modeEl = document.getElementById("territorialModeBadge");
+    if (modeEl) {
+      const mode = searchRadiusKm === 25 ? "LOCAL" : searchRadiusKm === 100 ? "REGIONAL" : "MACRO";
+      modeEl.textContent = `Modo territorial: ${mode} (${searchRadiusKm} km)`;
     }
 
     const countEl = document.getElementById("groupsCount");

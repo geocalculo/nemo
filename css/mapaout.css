@@ -251,6 +251,16 @@ body{
   color: var(--muted);
   font-weight:600;
 }
+.territorialModeBadge{
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(34,197,94,0.35);
+  background:rgba(190,242,100,0.2);
+  color:#365314;
+  font-weight:700;
+  font-size:.78rem;
+  white-space:nowrap;
+}
 .muted{color:var(--muted); font-size:.92rem}
 
 /* Layers list */

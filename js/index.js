@@ -17,6 +17,8 @@ const ENTRY_ZOOM = 10;
 const REGION_ZOOM = 10;
 
 const OUT_STORAGE_KEY = "geonemo_out_v2";
+const SEARCH_RADIUS_STORAGE_KEY = "geonemo_search_radius";
+const SEARCH_RADIUS_VALUES = [25, 100, 250];
 const MAP_PREF_KEY = "geonemo_map_pref";
 const GROUPS_URL = "capas/grupos.json";
 
@@ -513,7 +515,36 @@ function loadOut(){
 
 function openOut(){
   const outUrl = new URL("mapaout.html", window.location.href);
+  outUrl.searchParams.set("search_radius", String(resolveSearchRadiusKm()));
   window.open(outUrl.toString(), "_blank", "noopener");
+}
+
+function sanitizeSearchRadiusKm(raw) {
+  const value = Number(raw);
+  return SEARCH_RADIUS_VALUES.includes(value) ? value : null;
+}
+
+function resolveSearchRadiusKm() {
+  const params = new URLSearchParams(window.location.search || "");
+  const fromUrl = sanitizeSearchRadiusKm(params.get("search_radius"));
+  if (fromUrl != null) return fromUrl;
+  const fromStorage = sanitizeSearchRadiusKm(localStorage.getItem(SEARCH_RADIUS_STORAGE_KEY));
+  return fromStorage ?? 25;
+}
+
+function initSearchRadiusUI() {
+  const root = document.getElementById("searchRadiusGroup");
+  if (!root) return;
+  const active = resolveSearchRadiusKm();
+  localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(active));
+  root.querySelectorAll("input[name='searchRadius']").forEach((radio) => {
+    const val = sanitizeSearchRadiusKm(radio.value);
+    radio.checked = val === active;
+    radio.addEventListener("change", () => {
+      const next = sanitizeSearchRadiusKm(radio.value) ?? 25;
+      localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(next));
+    });
+  });
 }
 
 /* ===========================
@@ -1625,7 +1656,7 @@ function distToPerimeterM(feature, pt){
 /* ===========================
    Vinculación por GRUPO
 =========================== */
-async function linkOneGroupToPoint(group, pt, lon, lat){
+async function linkOneGroupToPoint(group, pt, lon, lat, searchRadiusKm, searchBBox){
   const files = group.files || [];
   if (!files.length) {
     return {
@@ -1645,6 +1676,7 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
     if (!idx.length) continue;
 
     for (const it of idx){
+      if (searchBBox && !bboxIntersects(it.bbox, searchBBox)) continue;
       if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
 
       let inside = false;
@@ -1681,8 +1713,9 @@ async function linkOneGroupToPoint(group, pt, lon, lat){
     if (!idx.length) continue;
 
     for (const it of idx){
+      if (searchBBox && !bboxIntersects(it.bbox, searchBBox)) continue;
       const d = distToPerimeterM(it.feature, pt);
-      if (d < bestD){
+      if (isFinite(d) && d <= (searchRadiusKm * 1000) && d < bestD){
         bestD = d;
         bestFeat = it.feature;
         bestFile = fileUrl;
@@ -1741,13 +1774,16 @@ async function onMapClick(e){
   }).addTo(map);
 
   const pt = turf.point([lng, lat]);
+  const searchRadiusKm = resolveSearchRadiusKm();
+  localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(searchRadiusKm));
+  const searchBBox = turf.bbox(turf.circle([lng, lat], searchRadiusKm, { units: "kilometers", steps: 24 }));
 
   const activeGroups = (GROUPS || []).filter(g => g.enabled !== false);
   const results = [];
 
   for (const g of activeGroups){
     try{
-      const r = await linkOneGroupToPoint(g, pt, lng, lat);
+      const r = await linkOneGroupToPoint(g, pt, lng, lat, searchRadiusKm, searchBBox);
       results.push(r);
     } catch(err){
       console.warn("Error vinculando grupo", g, err);
@@ -1784,6 +1820,7 @@ async function onMapClick(e){
     created_at: prev.created_at || nowIso(),
     updated_at: nowIso(),
     click: { lat, lng },
+    search_radius_km: searchRadiusKm,
     groups: results,
     links: legacyLinks
   });
@@ -1943,6 +1980,7 @@ function initWelcomeModal() {
   }
 
   bindUI();
+  initSearchRadiusUI();
   bindSearchUI();
   initWelcomeModal();
 
