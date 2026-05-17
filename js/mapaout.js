@@ -153,6 +153,25 @@ function addBasemapSatelliteWithLabels(map, { grayscale = false } = {}) {
 
 
 
+
+let mainBufferCircle = null;
+const BUFFER_OPTIONS_METERS = [500,1000,2000,5000,10000];
+function getSensitivityLevel(score){if(score>=75)return ['ALTA','#ef4444']; if(score>=55)return ['MEDIA-ALTA','#f97316']; if(score>=35)return ['MEDIA','#eab308']; return ['BAJA','#22c55e'];}
+function renderGeoCardSystem(data){
+ const links=data.sorted||[];const near=data.near||[]; const minDist=Math.min(...links.map(l=>Number(l.distance_m)||Infinity));
+ const totalArea=links.reduce((a,l)=>a+(computeFeatureAreaM2(l.feature)||0),0)/1e6; const inside=links.filter(l=>l.link_type==='inside').length;
+ const score=Math.max(10,Math.min(95,inside*25 + (near.length*12) + (minDist<2000?25:10)));
+ const [sens,color]=getSensitivityLevel(score);
+ const k=[['Sensibilidad territorial',sens,'Riesgo ambiental significativo',color],['Sitios protegidos cercanos',String(links.length),'Dentro del área de influencia','#0ea5e9'],['Distancia mínima',isFinite(minDist)?fmtKm(minDist):'—','Al sitio protegido más cercano','#6366f1'],['Superficie protegida cercana',`${totalArea.toLocaleString('es-CL',{maximumFractionDigits:1})} km²`,'Área total en el área de influencia','#14b8a6'],['Tipo dominante',getDominantSystem(links),'Sistema dominante ponderado','#334155']];
+ const hero=document.getElementById('heroKpis'); if(hero) hero.innerHTML=k.map(i=>`<div class="heroKpi"><div class="l">${i[0]}</div><div class="v" style="color:${i[3]}">${i[1]}</div><div class="l">${i[2]}</div></div>`).join('');
+ const t=document.getElementById('sitesTable'); if(t) t.innerHTML=`<table><thead><tr><th>Icono</th><th>Nombre</th><th>Distancia</th><th>Superficie</th><th>Estado</th></tr></thead><tbody>${links.slice(0,6).map(l=>{const d=extractGroupData(l);const st=getDictamen(l.link_type,(l.distance_border_m||l.distance_m||0)/1000);return `<tr><td>🛡️</td><td>${d.nombre}</td><td>${fmtKm(l.distance_m)}</td><td>${fmtArea(computeFeatureAreaM2(l.feature)||0)}</td><td><span class='badge badge--${st.class}'>${st.text}</span></td></tr>`}).join('')}</tbody></table><div class='muted'>Ver todos (${links.length})</div>`;
+ const r=document.getElementById('restrictionsPanel'); if(r){ const items=[['Restricción territorial',score],['Presión ambiental',Math.min(100,score-8)],['Compatibilidad industrial',Math.max(5,100-score)],['Sensibilidad ecológica',Math.min(100,score+5)]]; r.innerHTML=items.map(([n,v])=>`<div class='mini'><div class='l'>${n}</div><div style='font-weight:700'>${v}/100</div><div class='bar'><span style='width:${v}%;background:${v>70?'#ef4444':v>40?'#f59e0b':'#22c55e'}'></span></div></div>`).join('');}
+ const rec=document.getElementById('recommendationText'); if(rec) rec.innerHTML='🌿 Se recomienda evaluación ambiental detallada y análisis multicriterio antes de cualquier intervención en el área.';
+ const radar=document.getElementById('radarPanel'); if(radar){const v={minería:78,energía:62,industrial:55,inmobiliario:41,conservación:88}; radar.innerHTML=Object.entries(v).map(([n,x])=>`<div class='r'><label><span>${n}</span><strong>${x}</strong></label><div class='track'><span style='width:${x}%'></span></div></div>`).join('');}
+ setupBufferSlider();
+}
+function getDominantSystem(links){const w={}; links.forEach(l=>{const d=extractGroupData(l); const s=d.sistema||l.layer_id||'SNASPE'; const area=(computeFeatureAreaM2(l.feature)||1)/1e6; w[s]=(w[s]||0)+1+area*0.01;}); return Object.entries(w).sort((a,b)=>b[1]-a[1])[0]?.[0]||'SNASPE';}
+function setupBufferSlider(){const s=document.getElementById('bufferSlider'); if(!s)return; const lbl=document.getElementById('bufferLabel'); const apply=()=>{const m=BUFFER_OPTIONS_METERS[Number(s.value)]||2000; if(lbl) lbl.textContent=`${m>=1000?(m/1000)+' km':m+' m'}`; if(mainMap&&pointMarker){if(mainBufferCircle) mainMap.removeLayer(mainBufferCircle); mainBufferCircle=L.circle(pointMarker.getLatLng(),{radius:m,color:'#22c55e',weight:1,dashArray:'4,4',fillOpacity:.06}).addTo(mainMap);} }; s.oninput=apply; apply();}
 let mainMap = null;
 let pointMarker = null;
 let groupMaps = {}; // { groupId: leaflet map instance }
@@ -1417,6 +1436,8 @@ function loadAndRender() {
     if (countEl) {
       countEl.textContent = `${sorted.length} grupo${sorted.length !== 1 ? "s" : ""}`;
     }
+
+    renderGeoCardSystem({ sorted, near, searchRadiusKm });
 
     // Mapear índice original para scrollToGroup(idx)
     const originalIndex = new Map();
