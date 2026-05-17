@@ -471,6 +471,16 @@ function computeSurfaceM2(feature) {
   return null;
 }
 
+// Alias explícito para compatibilidad con el CARD PRO.
+// Mantiene contrato histórico usado por KPIs sin depender de globals externos.
+function computeFeatureAreaM2(feature) {
+  const m2 = computeSurfaceM2(feature);
+  if (m2 != null && isFinite(m2) && m2 > 0) return m2;
+
+  // Fallback final: nunca romper render por superficie inválida.
+  return 0;
+}
+
 function parseLengthToKm(raw) {
   if (raw == null) return null;
   const isNum = typeof raw === "number" && isFinite(raw);
@@ -1437,7 +1447,21 @@ function loadAndRender() {
       countEl.textContent = `${sorted.length} grupo${sorted.length !== 1 ? "s" : ""}`;
     }
 
-    renderGeoCardSystem({ sorted, near, searchRadiusKm });
+    try {
+      renderGeoCardSystem({ sorted, near, searchRadiusKm });
+    } catch (cardErr) {
+      console.error("[GeoNEMO CARD PRO] Error renderizando KPIs territoriales:", cardErr);
+      const hero = document.getElementById("heroKpis");
+      if (hero) {
+        hero.innerHTML = `
+          <div class="heroKpi">
+            <div class="l">Estado del CARD PRO</div>
+            <div class="v" style="color:#f97316">Degradado</div>
+            <div class="l">No se pudieron calcular todos los KPI; se muestran resultados base.</div>
+          </div>
+        `;
+      }
+    }
 
     // Mapear índice original para scrollToGroup(idx)
     const originalIndex = new Map();
