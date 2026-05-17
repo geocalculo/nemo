@@ -38,58 +38,52 @@
     <div class="brand">
       <div class="brand__dot"></div>
       <div class="brand__txt">
-        <div class="brand__title">GeoNEMO · MapaOut</div>
-        <div class="brand__sub">Salida de análisis: punto consultado + vinculación por grupos</div>
+        <div class="brand__title">GeoNEMO</div>
+        <div class="brand__sub">Análisis de sensibilidad territorial y áreas protegidas</div>
       </div>
     </div>
 
     <div class="topbar__right">
-      <button id="btnBack" class="btn btn--ghost" type="button">← Volver</button>
+      <button id="btnBack" class="btn btn--ghost" type="button">✕ Cerrar</button>
 
       <div class="dropdown">
-        <button id="btnDownloads" class="btn btn--primary" type="button">⬇ Descargas</button>
+        <button id="btnDownloads" class="btn btn--primary" type="button">Descargar PDF</button>
         <div id="downloadsMenu" class="dropdown__menu" aria-hidden="true">
-          <button id="btnDownloadKML" class="menuitem" type="button">KML (mapa principal)</button>
+          <button id="btnDownloadKML" class="menuitem" type="button">Exportar KML</button>
         </div>
       </div>
     </div>
   </header>
 
-  <main class="shell">
-    <!-- Mapa superior -->
-    <section class="card">
+  <main class="shell proShell">
+    <section class="heroKpis" id="heroKpis"></section>
+
+    <section class="card proMapCard">
       <div class="cardHead">
-        <div class="cardTitle">📍 Punto consultado</div>
+        <div class="cardTitle">Mapa Territorial</div>
         <div class="cardHead__right">
           <div id="territorialModeBadge" class="territorialModeBadge">Modo territorial: LOCAL (25 km)</div>
           <div id="coordsDisplay" class="pill">—</div>
-          <button class="btnSm btn--ghost" onclick="toggleMainLabels()">🏷️ Etiquetas</button>
-          <button class="btnSm btn--ghost" onclick="recenterMainMap()" type="button">🎯 Recentrar</button>
+          <button class="btnSm btn--ghost" onclick="toggleMainLabels()">Etiquetas</button>
+          <button class="btnSm btn--ghost" onclick="recenterMainMap()" type="button">Recentrar</button>
         </div>
       </div>
-      
-      <!-- Resumen textual de áreas detectadas -->
-      <div id="resumenAreas" style="padding: 0 12px 12px 12px; border-bottom: 1px solid var(--line);"></div>
-      
-      <div class="mapFrame">
-        <div id="map"></div>
-        <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
-      </div>
+      <div class="mapFrame"><div id="map"></div><div id="toast" class="toast"></div></div>
     </section>
 
-    <!-- Resultados por grupo -->
-    <section class="card" aria-label="Resultados por grupo">
-      <div class="cardHead">
-        <div class="cardTitle">Resultados por grupo</div>
-        <div id="groupsCount" class="pill">0</div>
-      </div>
-
-      <div id="groupsWrap" class="groupsWrap"></div>
+    <section class="proGrid">
+      <article class="card executive"><h3>Resumen Ejecutivo</h3><p id="resumenAreas"></p><button class="btn btn--ghost">Ver interpretación detallada</button></article>
+      <article class="card"><div class="cardHead"><h3>Sitios protegidos</h3><span id="groupsCount" class="pill">0</span></div><div id="sitesTable"></div></article>
     </section>
 
-    <div class="footerNote muted">
-      * Resultado preliminar de apoyo. No reemplaza pronunciamientos oficiales ni evaluaciones ambientales.
-    </div>
+    <section class="card"><h3>Restricciones y sensibilidad</h3><div id="restrictionsPanel" class="miniKpis"></div></section>
+    <section class="card recommendation" id="recommendationText"></section>
+
+    <section class="bottomPanels">
+      <article class="card"><h3>Radio de análisis (visual)</h3><input id="bufferSlider" type="range" min="0" max="4" step="1" value="2"/><div id="bufferLabel" class="muted">2 km</div></article>
+      <article class="card"><h3>Radar territorial</h3><div id="radarPanel"></div></article>
+      <article class="card"><details><summary>Mostrar detalle técnico</summary><div id="groupsWrap" class="groupsWrap"></div></details></article>
+    </section>
   </main>
 
   <script src="js/mapaout.js?v=gtm-events-20260425"></script>
