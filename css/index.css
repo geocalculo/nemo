@@ -35,6 +35,11 @@ html,body{height:100%;margin:0;overflow-x:hidden;font-family:Inter,system-ui,san
 .region-card label{font-size:.74rem;color:var(--muted);display:block;margin-bottom:6px}
 #regionDummy{}
 #selRegion{height:34px;width:100%;border-radius:10px;border:1px solid var(--border);background:#0f1c1a;color:var(--text);padding:0 10px}
+.radius-card{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:var(--radius);padding:8px 9px}
+.radius-card__title{font-size:.74rem;color:var(--muted);display:block;margin-bottom:6px}
+.searchRadiusGroup{display:grid;grid-template-columns:1fr;gap:4px}
+.searchRadiusGroup label{display:flex;align-items:center;gap:6px;font-size:.78rem;color:#d6e8db;cursor:pointer}
+.searchRadiusGroup input[type="radio"]{accent-color:#73c86b}
 
 
 /* Map stage */
