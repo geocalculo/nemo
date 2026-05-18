@@ -56,9 +56,11 @@
   </header>
 
   <main class="shell proShell">
-    <section class="heroKpis" id="heroKpis"></section>
-
     <section class="card proMapCard">
+      <div class="geoCardLayout">
+        <aside class="kpiPanel" id="heroKpis"></aside>
+
+        <div class="mapPanel">
       <div class="cardHead">
         <div class="cardTitle">Mapa Territorial</div>
         <div class="cardHead__right">
@@ -68,7 +70,9 @@
           <button class="btnSm btn--ghost" onclick="recenterMainMap()" type="button">Recentrar</button>
         </div>
       </div>
-      <div class="mapFrame"><div id="map"></div><div id="toast" class="toast"></div></div>
+      <div class="mapFrame"><div id="map"></div><div class="mapOverlaySoft"></div><div class="mapLegendCompact"><div><span class="dot dot--snaspe"></span>SNASPE</div><div><span class="dot dot--ramsar"></span>RAMSAR</div></div><div id="toast" class="toast"></div></div>
+        </div>
+      </div>
     </section>
 
     <section class="proGrid">

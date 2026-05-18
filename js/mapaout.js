@@ -156,14 +156,27 @@ function addBasemapSatelliteWithLabels(map, { grayscale = false } = {}) {
 
 let mainBufferCircle = null;
 const BUFFER_OPTIONS_METERS = [500,1000,2000,5000,10000];
-function getSensitivityLevel(score){if(score>=75)return ['ALTA','#ef4444']; if(score>=55)return ['MEDIA-ALTA','#f97316']; if(score>=35)return ['MEDIA','#eab308']; return ['BAJA','#22c55e'];}
+function getSensitivityLevel(score){if(score>=75)return ['ALTA','#22c55e']; if(score>=55)return ['MEDIA','#06b6d4']; if(score>=35)return ['MEDIA','#06b6d4']; return ['BAJA','#22c55e'];}
 function renderGeoCardSystem(data){
  const links=data.sorted||[];const near=data.near||[]; const minDist=Math.min(...links.map(l=>Number(l.distance_m)||Infinity));
  const totalArea=links.reduce((a,l)=>a+(computeFeatureAreaM2(l.feature)||0),0)/1e6; const inside=links.filter(l=>l.link_type==='inside').length;
  const score=Math.max(10,Math.min(95,inside*25 + (near.length*12) + (minDist<2000?25:10)));
  const [sens,color]=getSensitivityLevel(score);
- const k=[['Sensibilidad territorial',sens,'Riesgo ambiental significativo',color],['Sitios protegidos cercanos',String(links.length),'Dentro del área de influencia','#0ea5e9'],['Distancia mínima',isFinite(minDist)?fmtKm(minDist):'—','Al sitio protegido más cercano','#6366f1'],['Superficie protegida cercana',`${totalArea.toLocaleString('es-CL',{maximumFractionDigits:1})} km²`,'Área total en el área de influencia','#14b8a6'],['Tipo dominante',getDominantSystem(links),'Sistema dominante ponderado','#334155']];
- const hero=document.getElementById('heroKpis'); if(hero) hero.innerHTML=k.map(i=>`<div class="heroKpi"><div class="l">${i[0]}</div><div class="v" style="color:${i[3]}">${i[1]}</div><div class="l">${i[2]}</div></div>`).join('');
+ const dominant=getDominantSystem(links).toUpperCase();
+ const spatial=inside>0?'INTERIOR':'EXTERIOR';
+ const bufferKm=(BUFFER_OPTIONS_METERS[Number(document.getElementById('bufferSlider')?.value||2)]||2000)/1000;
+ const region=data.region||'No detectada';
+ const k=[
+ ['🛰️','Sensibilidad territorial',sens,'Riesgo territorial',color],
+ ['🛡️','Sitios protegidos cercanos',String(links.length),'Grupos encontrados','#22c55e'],
+ ['📏','Distancia mínima',isFinite(minDist)?fmtKm(minDist):'—','Al grupo más cercano','#06b6d4'],
+ ['🗺️','Superficie protegida cercana',`${totalArea.toLocaleString('es-CL',{maximumFractionDigits:1})} km²`,'Cobertura en influencia','#06b6d4'],
+ ['🧭','Tipo dominante',dominant.includes('RAMSAR')&&dominant.includes('SNASPE')?'MIXTO':(dominant.includes('RAMSAR')?'RAMSAR':'SNASPE'),'Sistema dominante','#22c55e'],
+ ['📍','Estado espacial',spatial,'Respecto del área protegida','#06b6d4'],
+ ['⭕','Buffer territorial aplicado',`${bufferKm} km`,'Distancia operacional','#22c55e'],
+ ['🌎','Región territorial detectada',region,'Macrozona de análisis','#06b6d4']
+ ];
+ const hero=document.getElementById('heroKpis'); if(hero) hero.innerHTML=k.map(i=>`<div class="heroKpi"><div class="l">${i[0]} ${i[1]}</div><div class="v" style="color:${i[4]}">${i[2]}</div><div class="s">${i[3]}</div></div>`).join('');
  const t=document.getElementById('sitesTable'); if(t) t.innerHTML=`<table><thead><tr><th>Icono</th><th>Nombre</th><th>Distancia</th><th>Superficie</th><th>Estado</th></tr></thead><tbody>${links.slice(0,6).map(l=>{const d=extractGroupData(l);const st=getDictamen(l.link_type,(l.distance_border_m||l.distance_m||0)/1000);return `<tr><td>🛡️</td><td>${d.nombre}</td><td>${fmtKm(l.distance_m)}</td><td>${fmtArea(computeFeatureAreaM2(l.feature)||0)}</td><td><span class='badge badge--${st.class}'>${st.text}</span></td></tr>`}).join('')}</tbody></table><div class='muted'>Ver todos (${links.length})</div>`;
  const r=document.getElementById('restrictionsPanel'); if(r){ const items=[['Densidad ecológica',score],['Fragmentación territorial',Math.max(10,Math.min(100,62-(inside*6)+(near.length*4)))],['Dominancia protegida',Math.min(100,48+(inside*10)+(near.length*6))],['Continuidad ecosistémica',Math.min(100,42+(links.length*7))],['Sensibilidad ambiental',Math.min(100,score+5)],['Proximidad ecológica',isFinite(minDist)?Math.max(10,100-Math.round(minDist/120)):20]]; r.innerHTML=items.map(([n,v])=>`<div class='mini'><div class='l'>${n}</div><div style='font-weight:700'>${v}/100</div><div class='bar'><span style='width:${v}%;background:${v>70?'#ef4444':v>40?'#f59e0b':'#22c55e'}'></span></div></div>`).join('');}
  const rec=document.getElementById('recommendationText'); if(rec) rec.innerHTML='🌿 El entorno presenta sensibilidad ecológica relevante debido a la proximidad y concentración de áreas protegidas oficiales, por lo que se recomienda priorizar criterios de conservación y resguardo ecosistémico.';
@@ -701,8 +714,7 @@ function initMainMap(lat, lng, links) {
   ).addTo(mainMap);
 
   // Monocromo SOLO al satélite del mapa resumen
-  mainMap.getPane("paneSat").style.filter =
-    "grayscale(100%) brightness(1.05) contrast(1.1)";
+  mainMap.getPane("paneSat").style.filter = "grayscale(0.15) brightness(1.08) opacity(0.5)";
 
   // Labels livianos (Carto) en paneLabels
   L.tileLayer(
@@ -737,13 +749,17 @@ function initMainMap(lat, lng, links) {
     if (!feature || !isFinite(distance_m) || distance_m > MAX_DISTANCE_FOR_DRAW) return;
 
     const poly = L.geoJSON(feature, {
-      style: {
-        color: "#f59e0b",
-        weight: 2,
-        opacity: 0.9,
-        fillColor: "#f59e0b",
-        fillOpacity: 0.14
-      }
+      style: (() => {
+        const sys = (extractGroupData(link).sistema || link.layer_id || 'SNASPE').toString().toUpperCase();
+        const isRamsar = sys.includes('RAMSAR');
+        return {
+          color: isRamsar ? '#06b6d4' : '#22c55e',
+          weight: 2,
+          opacity: 0.95,
+          fillColor: isRamsar ? 'rgba(6,182,212,0.15)' : 'rgba(34,197,94,0.15)',
+          fillOpacity: 0.5
+        };
+      })()
     }).addTo(mainMap);
 
     try { bounds.extend(poly.getBounds()); } catch (e) {}
@@ -771,6 +787,8 @@ function initMainMap(lat, lng, links) {
         >↓ Ver detalle</button>
       </div>
     `);
+    poly.on("popupopen", () => poly.setStyle({ weight: 4, opacity: 1 }));
+    poly.on("popupclose", () => poly.setStyle({ weight: 2, opacity: 0.95 }));
   });
 
   // ✅ Fit final + guardar bounds como COPIA (para que recenter incluya POI)
