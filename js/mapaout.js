@@ -166,17 +166,25 @@ function renderGeoCardSystem(data){
  const spatial=inside>0?'INTERIOR':'EXTERIOR';
  const bufferKm=(BUFFER_OPTIONS_METERS[Number(document.getElementById('bufferSlider')?.value||2)]||2000)/1000;
  const region=data.region||'No detectada';
- const k=[
+ const kMain=[
  ['🛰️','Sensibilidad territorial',sens,'Riesgo territorial',color],
  ['🛡️','Sitios protegidos cercanos',String(links.length),'Grupos encontrados','#22c55e'],
  ['📏','Distancia mínima',isFinite(minDist)?fmtKm(minDist):'—','Al grupo más cercano','#06b6d4'],
  ['🗺️','Superficie protegida cercana',`${totalArea.toLocaleString('es-CL',{maximumFractionDigits:1})} km²`,'Cobertura en influencia','#06b6d4'],
  ['🧭','Tipo dominante',dominant.includes('RAMSAR')&&dominant.includes('SNASPE')?'MIXTO':(dominant.includes('RAMSAR')?'RAMSAR':'SNASPE'),'Sistema dominante','#22c55e'],
  ['📍','Estado espacial',spatial,'Respecto del área protegida','#06b6d4'],
- ['⭕','Buffer territorial aplicado',`${bufferKm} km`,'Distancia operacional','#22c55e'],
  ['🌎','Región territorial detectada',region,'Macrozona de análisis','#06b6d4']
  ];
- const hero=document.getElementById('heroKpis'); if(hero) hero.innerHTML=k.map(i=>`<div class="heroKpi"><div class="l">${i[0]} ${i[1]}</div><div class="v" style="color:${i[4]}">${i[2]}</div><div class="s">${i[3]}</div></div>`).join('');
+ const kSide=[
+ ['📌','Coordenadas POI',`${(data.click?.lat ?? 0).toFixed(4)}, ${(data.click?.lng ?? 0).toFixed(4)}`,'Ubicación consultada','#22c55e'],
+ ['⭕','Buffer territorial',`${bufferKm} km`,'Radio de análisis','#22c55e'],
+ ['🧭','Tipo dominante',dominant.includes('RAMSAR')&&dominant.includes('SNASPE')?'MIXTO':(dominant.includes('RAMSAR')?'RAMSAR':'SNASPE'),'Sistema principal','#06b6d4'],
+ ['🧩','Cantidad de grupos',String(links.length),'Entidades detectadas','#06b6d4'],
+ ['📍','Estado espacial',spatial,'Respecto del área protegida','#06b6d4'],
+ ['📏','Distancia mínima',isFinite(minDist)?fmtKm(minDist):'—','Al grupo más cercano','#22c55e']
+ ];
+ const hero=document.getElementById('heroKpis'); if(hero) hero.innerHTML=kMain.map(i=>`<div class="heroKpi"><div class="l">${i[0]} ${i[1]}</div><div class="v" style="color:${i[4]}">${i[2]}</div><div class="s">${i[3]}</div></div>`).join('');
+ const side=document.getElementById('mapSideKpis'); if(side) side.innerHTML=kSide.map(i=>`<div class="heroKpi"><div class="l">${i[0]} ${i[1]}</div><div class="v" style="color:${i[4]}">${i[2]}</div><div class="s">${i[3]}</div></div>`).join('');
  const t=document.getElementById('sitesTable'); if(t) t.innerHTML=`<table><thead><tr><th>Icono</th><th>Nombre</th><th>Distancia</th><th>Superficie</th><th>Estado</th></tr></thead><tbody>${links.slice(0,6).map(l=>{const d=extractGroupData(l);const st=getDictamen(l.link_type,(l.distance_border_m||l.distance_m||0)/1000);return `<tr><td>🛡️</td><td>${d.nombre}</td><td>${fmtKm(l.distance_m)}</td><td>${fmtArea(computeFeatureAreaM2(l.feature)||0)}</td><td><span class='badge badge--${st.class}'>${st.text}</span></td></tr>`}).join('')}</tbody></table><div class='muted'>Ver todos (${links.length})</div>`;
  const r=document.getElementById('restrictionsPanel'); if(r){ const items=[['Densidad ecológica',score],['Fragmentación territorial',Math.max(10,Math.min(100,62-(inside*6)+(near.length*4)))],['Dominancia protegida',Math.min(100,48+(inside*10)+(near.length*6))],['Continuidad ecosistémica',Math.min(100,42+(links.length*7))],['Sensibilidad ambiental',Math.min(100,score+5)],['Proximidad ecológica',isFinite(minDist)?Math.max(10,100-Math.round(minDist/120)):20]]; r.innerHTML=items.map(([n,v])=>`<div class='mini'><div class='l'>${n}</div><div style='font-weight:700'>${v}/100</div><div class='bar'><span style='width:${v}%;background:${v>70?'#ef4444':v>40?'#f59e0b':'#22c55e'}'></span></div></div>`).join('');}
  const rec=document.getElementById('recommendationText'); if(rec) rec.innerHTML='🌿 El entorno presenta sensibilidad ecológica relevante debido a la proximidad y concentración de áreas protegidas oficiales, por lo que se recomienda priorizar criterios de conservación y resguardo ecosistémico.';
