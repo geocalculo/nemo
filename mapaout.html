@@ -57,22 +57,10 @@
 
   <main class="shell proShell">
     <section class="card proMapCard">
-      <div class="geoCardLayout">
-        <aside class="kpiPanel" id="heroKpis"></aside>
-
-        <div class="mapPanel">
-      <div class="cardHead">
-        <div class="cardTitle">Mapa Territorial</div>
-        <div class="cardHead__right">
-          <div id="territorialModeBadge" class="territorialModeBadge">Modo territorial: LOCAL (25 km)</div>
-          <div id="coordsDisplay" class="pill">—</div>
-          <button class="btnSm btn--ghost" onclick="toggleMainLabels()">Etiquetas</button>
-          <button class="btnSm btn--ghost" onclick="recenterMainMap()" type="button">Recentrar</button>
-        </div>
+      <div class="cardHead cardHead--kpis">
+        <div class="cardTitle">KPIs principales</div>
       </div>
-      <div class="mapFrame"><div id="map"></div><div class="mapOverlaySoft"></div><div class="mapLegendCompact"><div><span class="dot dot--snaspe"></span>SNASPE</div><div><span class="dot dot--ramsar"></span>RAMSAR</div></div><div id="toast" class="toast"></div></div>
-        </div>
-      </div>
+      <div class="heroKpis" id="heroKpis"></div>
     </section>
 
     <section class="proGrid">
@@ -80,13 +68,23 @@
       <article class="card"><div class="cardHead"><h3>Sitios protegidos</h3><span id="groupsCount" class="pill">0</span></div><div id="sitesTable"></div></article>
     </section>
 
-    <section class="card"><h3>Sensibilidad territorial ambiental</h3><div id="restrictionsPanel" class="miniKpis"></div></section>
-    <section class="card recommendation" id="recommendationText"></section>
+    <section class="card territorialSection">
+      <div class="territorialGrid">
+        <aside class="kpiPanel kpiPanel--compact" id="mapSideKpis"></aside>
 
-    <section class="bottomPanels">
-      <article class="card"><h3>Radio de análisis (visual)</h3><input id="bufferSlider" type="range" min="0" max="4" step="1" value="2"/><div id="bufferLabel" class="muted">2 km</div></article>
-      <article class="card"><h3>Sistemas protegidos</h3><div id="radarPanel"></div></article>
-      <article class="card"><details><summary>Mostrar detalle técnico ambiental</summary><div id="groupsWrap" class="groupsWrap"></div></details></article>
+        <div class="mapPanel">
+          <div class="cardHead">
+            <div class="cardTitle">Mapa Territorial</div>
+            <div class="cardHead__right">
+              <div id="territorialModeBadge" class="territorialModeBadge">Modo territorial: LOCAL (25 km)</div>
+              <div id="coordsDisplay" class="pill">—</div>
+              <button class="btnSm btn--ghost" onclick="toggleMainLabels()">Etiquetas</button>
+              <button class="btnSm btn--ghost" onclick="recenterMainMap()" type="button">Recentrar</button>
+            </div>
+          </div>
+          <div class="mapFrame"><div id="map"></div><div class="mapOverlaySoft"></div><div class="mapLegendCompact"><div><span class="dot dot--snaspe"></span>SNASPE</div><div><span class="dot dot--ramsar"></span>RAMSAR</div></div><div id="toast" class="toast"></div></div>
+        </div>
+      </div>
     </section>
   </main>
 

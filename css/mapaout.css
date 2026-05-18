@@ -594,3 +594,28 @@ body{background:var(--bg)}
 .dot{width:10px;height:10px;border-radius:2px;display:inline-block;}
 .dot--snaspe{background:rgba(34,197,94,.2); border:1px solid var(--snaspe);}
 .dot--ramsar{background:rgba(6,182,212,.2); border:1px solid var(--ramsar);}
+
+/* --- Executive card re-layout (May 2026) --- */
+.cardHead--kpis{margin-bottom:8px}
+.heroKpis{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:10px}
+.heroKpi{min-height:86px}
+.proGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.territorialSection{padding:14px}
+.territorialGrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:stretch}
+.kpiPanel--compact{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start}
+.kpiPanel--compact .heroKpi{padding:9px 10px;min-height:78px}
+.kpiPanel--compact .heroKpi .l{font-size:.72rem}
+.kpiPanel--compact .heroKpi .v{font-size:1rem}
+.kpiPanel--compact .heroKpi .s{font-size:.74rem}
+.territorialGrid .mapPanel{min-width:0}
+.territorialGrid .mapFrame{height:clamp(290px,42vh,430px)}
+
+@media (max-width:1050px){
+  .heroKpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .proGrid{grid-template-columns:1fr}
+  .territorialGrid{grid-template-columns:1fr}
+  .kpiPanel--compact{grid-template-columns:1fr 1fr}
+}
+@media (max-width:700px){
+  .kpiPanel--compact,.heroKpis{grid-template-columns:1fr}
+}
