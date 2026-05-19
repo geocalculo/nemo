@@ -157,6 +157,23 @@ function addBasemapSatelliteWithLabels(map, { grayscale = false } = {}) {
 let mainBufferCircle = null;
 const BUFFER_OPTIONS_METERS = [500,1000,2000,5000,10000];
 function getSensitivityLevel(score){if(score>=75)return ['ALTA','#22c55e']; if(score>=55)return ['MEDIA','#06b6d4']; if(score>=35)return ['MEDIA','#06b6d4']; return ['BAJA','#22c55e'];}
+function formatSingleCoordDMS(value, isLat = true) {
+  if (!Number.isFinite(value)) return "—";
+  const absValue = Math.abs(value);
+  const deg = Math.floor(absValue);
+  const minFloat = (absValue - deg) * 60;
+  const min = Math.floor(minFloat);
+  const sec = ((minFloat - min) * 60).toFixed(2);
+  const hemisphere = isLat ? (value >= 0 ? "N" : "S") : (value >= 0 ? "E" : "W");
+  return `${deg}° ${min}' ${sec}" ${hemisphere}`;
+}
+function formatCoordDMS(lat, lon) {
+  return {
+    lat: formatSingleCoordDMS(lat, true),
+    lon: formatSingleCoordDMS(lon, false),
+    text: `${formatSingleCoordDMS(lat, true)} / ${formatSingleCoordDMS(lon, false)}`
+  };
+}
 function renderGeoCardSystem(data){
  const links=data.sorted||[];const near=data.near||[]; const minDist=Math.min(...links.map(l=>Number(l.distance_m)||Infinity));
  const totalArea=links.reduce((a,l)=>a+(computeFeatureAreaM2(l.feature)||0),0)/1e6; const inside=links.filter(l=>l.link_type==='inside').length;
@@ -166,14 +183,15 @@ function renderGeoCardSystem(data){
  const spatial=inside>0?'INTERIOR':'EXTERIOR';
  const bufferKm=(BUFFER_OPTIONS_METERS[Number(document.getElementById('bufferSlider')?.value||2)]||2000)/1000;
  const region=data.region||'No detectada';
+ const poiDms = formatCoordDMS(data.click?.lat ?? 0, data.click?.lng ?? 0);
  const kMain=[
- ['📍','POI',`${(data.click?.lat ?? 0).toFixed(4)} / ${(data.click?.lng ?? 0).toFixed(4)}`,'UTM 19S','#16a34a'],
+ ['📍','POI',poiDms.text,'Geográficas WGS84','#16a34a'],
  ['🎯','RADIO DE BÚSQUEDA',`${bufferKm} km`,'Área de influencia','#3b82f6'],
  ['🛡️','SITIOS ENCONTRADOS',String(links.length),'Dentro del radio','#16a34a'],
  ['◖','ESTADO TERRITORIAL',`INTERACCIÓN ${sens}`,'Sensibilidad ambiental','#d97706']
  ];
  const kSide=[
- ['📌','Coordenadas POI',`${(data.click?.lat ?? 0).toFixed(4)}, ${(data.click?.lng ?? 0).toFixed(4)}`,'Ubicación consultada','#22c55e'],
+ ['📌','Coordenadas POI',poiDms.text,'Ubicación consultada','#22c55e'],
  ['⭕','Buffer territorial',`${bufferKm} km`,'Radio de análisis','#22c55e'],
  ['🧭','Tipo dominante',dominant.includes('RAMSAR')&&dominant.includes('SNASPE')?'MIXTO':(dominant.includes('RAMSAR')?'RAMSAR':'SNASPE'),'Sistema principal','#06b6d4'],
  ['🧩','Cantidad de grupos',String(links.length),'Entidades detectadas','#06b6d4'],
@@ -745,7 +763,7 @@ function initMainMap(lat, lng, links) {
     zIndexOffset: 1000
   }).addTo(mainMap);
 
-  pointMarker.bindTooltip("📍 Punto consultado", { direction: "top" });
+  pointMarker.bindTooltip(`📍 Punto consultado<br>${formatCoordDMS(lat, lng).text}`, { direction: "top" });
 
   // ✅ Bounds master (robusto): parte vacío y FORZAMOS incluir POI
   const bounds = L.latLngBounds([]);
@@ -939,6 +957,7 @@ function initGroupMap(containerId, lat, lng, feature, distanceM) {
     fillColor: "#bef264",
     fillOpacity: 0.7,
   }).addTo(map);
+  pointMarker.bindTooltip(`📍 POI<br>${formatCoordDMS(lat, lng).text}`, { direction: "top" });
 
   let layer = null;
 
@@ -1182,7 +1201,7 @@ function renderGroupCard(link, clickLat, clickLng, index) {
               ${centroide ? `
               <div class="miniKpi">
                 <div class="kpi__label">📍 Centroide</div>
-                <div class="kpi__value">${centroide.lat.toFixed(5)}, ${centroide.lng.toFixed(5)}</div>
+                <div class="kpi__value">${formatCoordDMS(centroide.lat, centroide.lng).text}</div>
               </div>
               ` : ""}
             </div>
@@ -1460,7 +1479,7 @@ function loadAndRender() {
 
     const coordsEl = document.getElementById("coordsDisplay");
     if (coordsEl) {
-      coordsEl.textContent = `${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}`;
+      coordsEl.textContent = formatCoordDMS(click.lat, click.lng).text;
     }
     const modeEl = document.getElementById("territorialModeBadge");
     if (modeEl) {
@@ -1474,7 +1493,7 @@ function loadAndRender() {
     }
 
     try {
-      renderGeoCardSystem({ sorted, near, searchRadiusKm });
+      renderGeoCardSystem({ sorted, near, searchRadiusKm, click });
     } catch (cardErr) {
       console.error("[GeoNEMO CARD PRO] Error renderizando KPIs territoriales:", cardErr);
       const hero = document.getElementById("heroKpis");
@@ -1678,7 +1697,7 @@ function buildMainMapKmlFromStorage() {
   placemarks.push(
     placemarkKml({
       name: "Punto consultado",
-      description: `Coordenadas: ${click.lat.toFixed(6)}, ${click.lng.toFixed(6)}`,
+      description: `Coordenadas: ${formatCoordDMS(click.lat, click.lng).text}`,
       geomKml: geometryToKml({
         type: "Point",
         coordinates: [click.lng, click.lat],
