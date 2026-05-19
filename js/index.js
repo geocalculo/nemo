@@ -17,11 +17,9 @@ const ENTRY_ZOOM = 10;
 const REGION_ZOOM = 10;
 
 const OUT_STORAGE_KEY = "geonemo_out_v2";
-const SEARCH_RADIUS_STORAGE_KEY = "geonemo_search_radius";
+const SEARCH_RADIUS_STORAGE_KEY = "geonemo_search_radius_km";
 const SEARCH_RADIUS_VALUES = [25, 100, 250];
 const MAP_PREF_KEY = "geonemo_map_pref";
-const MAP_LABEL_STORAGE_KEY = "geonemo_map_labels";
-const MAP_LABEL_VALUES = ["none", "name", "type", "system"];
 const GROUPS_URL = "capas/grupos.json";
 
 // debug: si true, muestra en consola info detallada de cada paso (carga, stats, click, etc).
@@ -515,9 +513,13 @@ function loadOut(){
   } catch(e){ return null; }
 }
 
-function openOut(){
+function openOut(context = {}){
   const outUrl = new URL("mapaout.html", window.location.href);
-  outUrl.searchParams.set("search_radius", String(resolveSearchRadiusKm()));
+  const radiusKm = resolveSearchRadiusKm();
+  outUrl.searchParams.set("radius", String(radiusKm));
+  if (Number.isFinite(context.lat)) outUrl.searchParams.set("lat", String(context.lat));
+  if (Number.isFinite(context.lng)) outUrl.searchParams.set("lon", String(context.lng));
+  if (context.bbox) outUrl.searchParams.set("bbox", context.bbox);
   window.open(outUrl.toString(), "_blank", "noopener");
 }
 
@@ -528,31 +530,10 @@ function sanitizeSearchRadiusKm(raw) {
 
 function resolveSearchRadiusKm() {
   const params = new URLSearchParams(window.location.search || "");
-  const fromUrl = sanitizeSearchRadiusKm(params.get("search_radius"));
+  const fromUrl = sanitizeSearchRadiusKm(params.get("radius") ?? params.get("search_radius"));
   if (fromUrl != null) return fromUrl;
   const fromStorage = sanitizeSearchRadiusKm(localStorage.getItem(SEARCH_RADIUS_STORAGE_KEY));
-  return fromStorage ?? 25;
-}
-
-
-function resolveMapLabelMode() {
-  const stored = String(localStorage.getItem(MAP_LABEL_STORAGE_KEY) || "none").toLowerCase();
-  return MAP_LABEL_VALUES.includes(stored) ? stored : "none";
-}
-
-function initMapLabelUI() {
-  const root = document.getElementById("mapLabelGroup");
-  if (!root) return;
-  const active = resolveMapLabelMode();
-  localStorage.setItem(MAP_LABEL_STORAGE_KEY, active);
-  root.querySelectorAll("input[name='mapLabels']").forEach((radio) => {
-    const val = String(radio.value || "none").toLowerCase();
-    radio.checked = val === active;
-    radio.addEventListener("change", () => {
-      const next = MAP_LABEL_VALUES.includes(val) ? val : "none";
-      localStorage.setItem(MAP_LABEL_STORAGE_KEY, next);
-    });
-  });
+  return fromStorage ?? 100;
 }
 
 function initTerritorialPanelUI() {
@@ -584,11 +565,13 @@ function initSearchRadiusUI() {
   if (!root) return;
   const active = resolveSearchRadiusKm();
   localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(active));
+  window.GEONEMO_SEARCH_RADIUS_KM = active;
   root.querySelectorAll("input[name='searchRadius']").forEach((radio) => {
     const val = sanitizeSearchRadiusKm(radio.value);
     radio.checked = val === active;
     radio.addEventListener("change", () => {
-      const next = sanitizeSearchRadiusKm(radio.value) ?? 25;
+      const next = sanitizeSearchRadiusKm(radio.value) ?? 100;
+      window.GEONEMO_SEARCH_RADIUS_KM = next;
       localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(next));
     });
   });
@@ -1872,7 +1855,9 @@ async function onMapClick(e){
     links: legacyLinks
   });
 
-  openOut();
+  const bounds = map.getBounds();
+  const bbox = [bounds.getNorth(), bounds.getEast(), bounds.getSouth(), bounds.getWest()].join(",");
+  openOut({ lat, lng, bbox });
 }
 
 /* ===========================
@@ -2029,7 +2014,6 @@ function initWelcomeModal() {
   bindUI();
   initTerritorialPanelUI();
   initSearchRadiusUI();
-  initMapLabelUI();
   bindSearchUI();
   initWelcomeModal();
 
