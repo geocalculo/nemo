@@ -21,6 +21,7 @@
 const STORAGE_KEY = "geonemo_out_v2";
 const MAX_DISTANCE_FOR_DRAW = 300000; // 300 km - más allá no dibujamos geometría
 const SEARCH_RADIUS_VALUES = [25, 100, 250];
+const SEARCH_RADIUS_STORAGE_KEY = "geonemo_search_radius_km";
 const TRACK_DEDUPE_WINDOW_MS = 1200;
 const TRACK_SITE = "geonemo";
 const _trackEventCache = new Map();
@@ -155,7 +156,6 @@ function addBasemapSatelliteWithLabels(map, { grayscale = false } = {}) {
 
 
 let mainBufferCircle = null;
-const BUFFER_OPTIONS_METERS = [500,1000,2000,5000,10000];
 function getSensitivityLevel(score){if(score>=75)return ['ALTA','#22c55e']; if(score>=55)return ['MEDIA','#06b6d4']; if(score>=35)return ['MEDIA','#06b6d4']; return ['BAJA','#22c55e'];}
 function formatSingleCoordDMS(value, isLat = true) {
   if (!Number.isFinite(value)) return "—";
@@ -181,7 +181,7 @@ function renderGeoCardSystem(data){
  const [sens,color]=getSensitivityLevel(score);
  const dominant=getDominantSystem(links).toUpperCase();
  const spatial=inside>0?'INTERIOR':'EXTERIOR';
- const bufferKm=(BUFFER_OPTIONS_METERS[Number(document.getElementById('bufferSlider')?.value||2)]||2000)/1000;
+ const bufferKm=Number(data.searchRadiusKm)||100;
  const region=data.region||'No detectada';
  const poiDms = formatCoordDMS(data.click?.lat ?? 0, data.click?.lng ?? 0);
  const kMain=[
@@ -206,11 +206,33 @@ function renderGeoCardSystem(data){
  const r=document.getElementById('restrictionsPanel'); if(r){ const items=[['Densidad ecológica',score],['Fragmentación territorial',Math.max(10,Math.min(100,62-(inside*6)+(near.length*4)))],['Dominancia protegida',Math.min(100,48+(inside*10)+(near.length*6))],['Continuidad ecosistémica',Math.min(100,42+(links.length*7))],['Sensibilidad ambiental',Math.min(100,score+5)],['Proximidad ecológica',isFinite(minDist)?Math.max(10,100-Math.round(minDist/120)):20]]; r.innerHTML=items.map(([n,v])=>`<div class='mini'><div class='l'>${n}</div><div style='font-weight:700'>${v}/100</div><div class='bar'><span style='width:${v}%;background:${v>70?'#ef4444':v>40?'#f59e0b':'#22c55e'}'></span></div></div>`).join('');}
  const rec=document.getElementById('recommendationText'); if(rec) rec.innerHTML='🌿 El entorno presenta sensibilidad ecológica relevante debido a la proximidad y concentración de áreas protegidas oficiales, por lo que se recomienda priorizar criterios de conservación y resguardo ecosistémico.';
  const radar=document.getElementById('radarPanel'); if(radar){const systems=getProtectedSystemsComposition(links); radar.innerHTML=systems.map(([n,x])=>`<div class='r'><label><span>${n}</span><strong>${x}%</strong></label><div class='track'><span style='width:${x}%'></span></div></div>`).join('');}
- setupBufferSlider();
+ setupBufferSlider(data.searchRadiusKm);
 }
 function getDominantSystem(links){const w={}; links.forEach(l=>{const d=extractGroupData(l); const s=d.sistema||l.layer_id||'SNASPE'; const area=(computeFeatureAreaM2(l.feature)||1)/1e6; w[s]=(w[s]||0)+1+area*0.01;}); return Object.entries(w).sort((a,b)=>b[1]-a[1])[0]?.[0]||'SNASPE';}
 function getProtectedSystemsComposition(links){const weights={}; links.forEach((l)=>{const d=extractGroupData(l); const key=(d.sistema||l.layer_id||'SNASPE').toString().toUpperCase(); const area=Math.max(0.2,(computeFeatureAreaM2(l.feature)||0)/1e6); weights[key]=(weights[key]||0)+area;}); const entries=Object.entries(weights).sort((a,b)=>b[1]-a[1]); if(!entries.length) return [['SNASPE',100]]; const total=entries.reduce((acc,[,v])=>acc+v,0); let accPct=0; const pct=entries.map(([k,v],idx)=>{if(idx===entries.length-1){const last=Math.max(1,100-accPct); return [k,last];} const value=Math.max(1,Math.round((v/total)*100)); accPct+=value; return [k,value];}); return pct;}
-function setupBufferSlider(){const s=document.getElementById('bufferSlider'); if(!s)return; const lbl=document.getElementById('bufferLabel'); const apply=()=>{const m=BUFFER_OPTIONS_METERS[Number(s.value)]||2000; if(lbl) lbl.textContent=`${m>=1000?(m/1000)+' km':m+' m'}`; if(mainMap&&pointMarker){if(mainBufferCircle) mainMap.removeLayer(mainBufferCircle); mainBufferCircle=L.circle(pointMarker.getLatLng(),{radius:m,color:'#22c55e',weight:1,dashArray:'4,4',fillOpacity:.06}).addTo(mainMap);} }; s.oninput=apply; apply();}
+function setupBufferSlider(searchRadiusKm){
+  const radiusMeters = (Number(searchRadiusKm) || 100) * 1000;
+  const lbl=document.getElementById('bufferLabel');
+  if(lbl) lbl.textContent=`${Number(searchRadiusKm) || 100} km`;
+  if(mainMap&&pointMarker){
+    if(mainBufferCircle) mainMap.removeLayer(mainBufferCircle);
+    mainBufferCircle=L.circle(pointMarker.getLatLng(),{radius:radiusMeters,color:'#22c55e',weight:1,dashArray:'4,4',fillOpacity:.06}).addTo(mainMap);
+  }
+}
+
+function sanitizeSearchRadiusKm(raw) {
+  const value = Number(raw);
+  return SEARCH_RADIUS_VALUES.includes(value) ? value : null;
+}
+
+function resolveSearchRadiusKm(data) {
+  const radiusFromUrl = sanitizeSearchRadiusKm(urlParams.get("radius") ?? urlParams.get("search_radius"));
+  if (radiusFromUrl != null) return radiusFromUrl;
+  const radiusFromStorage = sanitizeSearchRadiusKm(localStorage.getItem(SEARCH_RADIUS_STORAGE_KEY));
+  if (radiusFromStorage != null) return radiusFromStorage;
+  const radiusFromData = sanitizeSearchRadiusKm(data?.search_radius_km);
+  return radiusFromData ?? 100;
+}
 let mainMap = null;
 let pointMarker = null;
 let groupMaps = {}; // { groupId: leaflet map instance }
@@ -1444,11 +1466,9 @@ function loadAndRender() {
     const data = JSON.parse(raw);
     const click = data.click || {};
     const links = data.links || [];
-    const radiusFromUrl = Number(urlParams.get("search_radius"));
-    const radiusFromData = Number(data.search_radius_km);
-    const searchRadiusKm = SEARCH_RADIUS_VALUES.includes(radiusFromUrl)
-      ? radiusFromUrl
-      : (SEARCH_RADIUS_VALUES.includes(radiusFromData) ? radiusFromData : 25);
+    const searchRadiusKm = resolveSearchRadiusKm(data);
+    window.GEONEMO_SEARCH_RADIUS_KM = searchRadiusKm;
+    localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(searchRadiusKm));
     const searchRadiusM = searchRadiusKm * 1000;
     const linksInRadius = links.filter((link) =>
       link?.link_type === "inside" || (Number.isFinite(link?.distance_m) && link.distance_m <= searchRadiusM)
