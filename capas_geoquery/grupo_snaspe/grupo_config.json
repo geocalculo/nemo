@@ -1,0 +1,56 @@
+{
+  "id": "snaspe",
+  "nombre": "SNASPE",
+  "nombre_largo": "Sistema Nacional de Áreas Silvestres Protegidas del Estado",
+  "activo": true,
+  "deduplicacion": [
+    "ID_CATASTR",
+    "CATEGORIA",
+    "NOMBRE_TOT",
+    "TERRITORIO",
+    "DECRETO"
+  ],
+  "campos": {
+    "id": [
+      "ID_CATASTR",
+      "fid"
+    ],
+    "nombre": [
+      "NOMBRE_TOT",
+      "NOMBRE_UNI"
+    ],
+    "nombre_alternativo": [
+      "NOMBRE_UNI"
+    ],
+    "categoria": [
+      "CATEGORIA"
+    ],
+    "region": [
+      "REGION"
+    ],
+    "territorio": [
+      "TERRITORIO"
+    ],
+    "superficie": [
+      "SUPERFICIE"
+    ],
+    "decreto": [
+      "DECRETO"
+    ],
+    "emisor": [
+      "EMISOR_DEC"
+    ],
+    "condicion": [
+      "CONDICION"
+    ],
+    "tipo_propiedad": [
+      "TIPO_DE_PR"
+    ],
+    "plano": [
+      "NUM_PLANO"
+    ],
+    "link": [
+      "LINK"
+    ]
+  }
+}

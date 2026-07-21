@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "sitio": "geonemo",
+  "grupos": [
+    {
+      "id": "snaspe",
+      "nombre": "SNASPE",
+      "carpeta": "grupo_snaspe",
+      "config": "grupo_snaspe/grupo_config.json",
+      "activo": true,
+      "orden": 1
+    },
+    {
+      "id": "ramsar",
+      "nombre": "Sitios Ramsar",
+      "carpeta": "grupo_ramsar",
+      "config": "grupo_ramsar/grupo_config.json",
+      "activo": true,
+      "orden": 2
+    }
+  ]
+}

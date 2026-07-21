@@ -1,0 +1,80 @@
+{
+  "activo": true,
+  "capas": [
+    {
+      "id": "nemo_snaspe_sub10k",
+      "nombre": "Áreas SNASPE",
+      "archivo": "capas_panel/nemo_snaspe_sub10k.geojson",
+      "tipo": "polygon"
+    },
+    {
+      "id": "nemo_snaspe_xl_conti",
+      "nombre": "Áreas SNASPE",
+      "archivo": "capas_panel/snaspe_XL_from_raster_conti.geojson",
+      "tipo": "polygon"
+    },
+    {
+      "id": "nemo_snaspe_xl_mar",
+      "nombre": "Áreas SNASPE",
+      "archivo": "capas_panel/snaspe_XL_from_raster_mar.geojson",
+      "tipo": "polygon"
+    },
+    {
+      "id": "nemo_ramsar_summary",
+      "nombre": "Sitios Ramsar",
+      "archivo": "capas_summary/nemo_ramsar_summary.geojson",
+      "tipo": "point"
+    }
+  ],
+  "indicadores": [
+    {
+      "id": "total_snaspe",
+      "label": "SNASPE",
+      "operacion": "count",
+      "capas": [
+        "nemo_snaspe_sub10k",
+        "nemo_snaspe_xl_conti",
+        "nemo_snaspe_xl_mar"
+      ],
+      "campo": "ID_CATASTR",
+      "distinct": true,
+      "descripcion": "Cuenta unidades SNASPE únicas por ID_CATASTR o NOMBRE_TOT, evitando multiplicar fragmentos vectorizados."
+    },
+    {
+      "id": "area_snaspe",
+      "label": "Área SNASPE",
+      "operacion": "sum",
+      "campo": "SUPERFICIE",
+      "campo_distinct": "ID_CATASTR",
+      "capas": [
+        "nemo_snaspe_sub10k",
+        "nemo_snaspe_xl_conti",
+        "nemo_snaspe_xl_mar"
+      ],
+      "distinctSum": true,
+      "sufijo": "ha",
+      "decimales": 0,
+      "numeric": true,
+      "descripcion": "Suma superficie SNASPE una vez por ID_CATASTR o NOMBRE_TOT, evitando doble conteo entre fuentes y fragmentos."
+    },
+    {
+      "id": "total_ramsar",
+      "label": "Ramsar",
+      "operacion": "count",
+      "capas": [
+        "nemo_ramsar_summary"
+      ]
+    },
+    {
+      "id": "area_ramsar",
+      "label": "Área Ramsar",
+      "operacion": "sum",
+      "campo": "superficie",
+      "capas": [
+        "nemo_ramsar_summary"
+      ],
+      "sufijo": "ha",
+      "decimales": 0
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "modalIntro": {
+    "activo": true,
+    "storageKey": "geonemo_intro_modal_hidden_v1",
+    "imagen": {
+      "archivo": "modal-3-pasos.png",
+      "ruta": "./assets/",
+      "alt": "Flujo de uso de GeoNEMO: hacer clic, analizar IPT y descargar PDF/KML"
+    }
+  }
+}

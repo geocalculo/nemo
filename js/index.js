@@ -1,1010 +1,605 @@
-/************************************************************
- * GeoNEMO - index.js (WGS84 + Vinculación por GRUPO)
- *
- * - Master de grupos: capas/grupos.json
- * - BBOX resumen: tabla por grupo (# áreas + sup intersección)
- * - Click: 1 polígono ganador por grupo (inside o nearest perimeter)
- *
- * Requiere: Leaflet (L) + Turf.js (turf) global.
- ************************************************************/
-
-const REGIONES_URL = "data/regiones.json";
-const HOME_VIEW = { center: [-29.95, -71.25], zoom: 7 };
-const VIEWPORT_STORAGE_KEY = "ms:lastViewport:geonemo";
-const VIEWPORT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-const ENTRY_ZOOM = 10;
-const REGION_ZOOM = 10;
-
-const OUT_STORAGE_KEY = "geonemo_out_v2";
-const SEARCH_RADIUS_STORAGE_KEY = "geonemo_search_radius_km";
-const SEARCH_RADIUS_VALUES = [25, 100, 250];
-const MAP_PREF_KEY = "geonemo_map_pref";
-const GROUPS_URL = "capas/grupos.json";
-
-// debug: si true, muestra en consola info detallada de cada paso (carga, stats, click, etc).
-const DEBUG_STEP_MODE = false;
-const TRACK_DEDUPE_WINDOW_MS = 1200;
-const TRACK_SITE = "geonemo";
-const _trackEventCache = new Map();
-const TRACK_DEBUG = new URLSearchParams(window.location.search).has("gtm_debug");
-
-if (TRACK_DEBUG) {
-  console.log("[GeoNEMO GTM] index.js cargado con tracking");
-}
-
-let _debugBootstrap = null;
-let _debugStep = 0;
-// debug: registra info detallada de cada paso, si DEBUG_STEP_MODE=true.
-
 let map;
-let userMarker = null;
-let clickMarker = null;
+let osmLayer;
+let satLayer;
+let currentBaseLayer;
+let currentBasemap = "osm";
+let nemoLabelsVisible = false;
+let nemoPanelLayers = {};
+const NEMO_OSM_COLOR = "#39ff14";
+const NEMO_SAT_COLOR = "#fff200";
+const NEMO_LAYER_STYLE_BASE = {
+  weight: 3,
+  opacity: 1,
+  fillOpacity: 0.06
+};
+const SNASPE_RASTER_METADATA_URL = "./capas_panel/snaspe_raster/metadata.json";
+const SNASPE_RASTER_FOLDER_URL = "./capas_panel/snaspe_raster/";
+const SNASPE_RASTER_GEOTIFF_EXTENSIONS = new Set([".tif", ".tiff"]);
+const SNASPE_RASTER_OPACITY = 1.0;
+const NEMO_PANEL_LAYER_CONFIG = [
+  {
+    id: "snaspe",
+    visibleName: "SNASPE",
+    archivos: [
+      "./capas_panel/nemo_snaspe_sub10k.geojson",
+      "./capas_panel/snaspe_XL_from_raster_conti.geojson",
+      "./capas_panel/snaspe_XL_from_raster_mar.geojson"
+    ],
+    labelFields: ["NOMBRE_TOT", "NOMBRE_UNI", "nombre", "Nombre", "NOMBRE"],
+    labelGroupFields: ["ID_CATASTR", "NOMBRE_TOT"],
+    style: { ...NEMO_LAYER_STYLE_BASE }
+  },
+  {
+    id: "ramsar",
+    visibleName: "Sitios Ramsar",
+    archivo: "./capas_panel/nemo_ramsar_panel.geojson",
+    labelFields: ["Nombre", "nombre", "NOMBRE"],
+    labelGroupFields: ["Id", "Nombre"],
+    style: { ...NEMO_LAYER_STYLE_BASE }
+  }
+];
+let initialCrossAccessState = null;
+let selectedPoint = null;
+let selectedFeatureContext = null;
+const SITE_ID = "geonemo";
+const SITE_CONFIG = { initialRegion: "Región de Los Lagos" };
+const CROSS_ACCESS_PARAM_NAME = "from";
+const CROSS_ACCESS_PARAM_VALUE = "crossaccess";
 
-let topoBase = null;
-let satOverlay = null;
-let initialViewport = null;
-
-let incomingViewportApplied = false;
-let userViewportInteractionArmed = false;
-
-const USER_LOCATE_ZOOM = 13;
+let viewportRestoreApplied = false;
+let initialViewportCompleted = false;
+let geoQueryRestoreState = null;
 
 function toFiniteNumber(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
-function parseIncomingViewport() {
-  const params = new URLSearchParams(window.location.search || "");
-
-  const lat = toFiniteNumber(params.get("lat"));
-  const lon = toFiniteNumber(params.get("lon") ?? params.get("lng"));
-  const zoom = toFiniteNumber(params.get("zoom"));
-
-  const hasValidCoords =
-    lat != null && lon != null && zoom != null &&
-    lat >= -90 && lat <= 90 &&
-    lon >= -180 && lon <= 180 &&
-    zoom > 0 && zoom <= 22;
-
-  const bboxRaw = params.get("bbox");
-  if (bboxRaw) {
-    const parts = bboxRaw.split(",").map(toFiniteNumber);
-    if (parts.length === 4 && parts.every((v) => v != null)) {
-      // Contrato del ecosistema: north,east,south,west
-      const [north, east, south, west] = parts;
-      const validNesw =
-        north <= 90 && north >= -90 &&
-        south <= 90 && south >= -90 &&
-        east <= 180 && east >= -180 &&
-        west <= 180 && west >= -180 &&
-        north > south &&
-        east > west;
-
-      if (validNesw) {
-        return {
-          hasIncomingViewport: true,
-          type: "bbox",
-          bounds: L.latLngBounds([south, west], [north, east])
-        };
-      }
-    }
-  }
-
-  if (hasValidCoords) {
-    return {
-      hasIncomingViewport: true,
-      type: "coords",
-      lat,
-      lon,
-      zoom
-    };
-  }
-
-  return { hasIncomingViewport: false, type: "default" };
+function normalizeBasemap(value) {
+  return String(value || "").toLowerCase() === "sat" ? "sat" : "osm";
 }
 
-function isValidLatLng(lat, lng) {
-  return Number.isFinite(lat) && Number.isFinite(lng) &&
-    lat >= -90 && lat <= 90 &&
-    lng >= -180 && lng <= 180;
+function validLat(value) { return Number.isFinite(value) && value >= -90 && value <= 90; }
+function validLon(value) { return Number.isFinite(value) && value >= -180 && value <= 180; }
+function validZoom(value) { return Number.isFinite(value) && value >= 0 && value <= 22; }
+
+function getGeoQueryOriginStorageKey(site = SITE_ID) {
+  return `geox:${site}:geoquery-origin`;
 }
 
-function isValidStoredBBox(bbox) {
-  if (!bbox || typeof bbox !== "object") return false;
-  const north = toFiniteNumber(bbox.north);
-  const east = toFiniteNumber(bbox.east);
-  const south = toFiniteNumber(bbox.south);
-  const west = toFiniteNumber(bbox.west);
-  if (![north, east, south, west].every((v) => v != null)) return false;
-  if (!isValidLatLng(north, east) || !isValidLatLng(south, west)) return false;
-  return north > south && east > west;
-}
-
-function persistCurrentViewport(mapInstance) {
-  if (!mapInstance) return;
-  try {
-    const bounds = mapInstance.getBounds();
-    const payload = {
-      bbox: {
-        north: bounds.getNorth(),
-        east: bounds.getEast(),
-        south: bounds.getSouth(),
-        west: bounds.getWest()
-      },
-      timestamp: Date.now()
-    };
-    localStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(payload));
-  } catch (_) {}
-}
-
-function readStoredViewport() {
-  try {
-    const raw = localStorage.getItem(VIEWPORT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const timestamp = toFiniteNumber(parsed?.timestamp);
-    if (!Number.isFinite(timestamp) || timestamp <= 0) {
-      localStorage.removeItem(VIEWPORT_STORAGE_KEY);
-      return null;
-    }
-    if ((Date.now() - timestamp) > VIEWPORT_TTL_MS) {
-      localStorage.removeItem(VIEWPORT_STORAGE_KEY);
-      return null;
-    }
-    if (!isValidStoredBBox(parsed?.bbox)) {
-      localStorage.removeItem(VIEWPORT_STORAGE_KEY);
-      return null;
-    }
-    const { north, east, south, west } = parsed.bbox;
-    return {
-      type: "bbox",
-      bounds: L.latLngBounds([south, west], [north, east])
-    };
-  } catch (_) {
-    try { localStorage.removeItem(VIEWPORT_STORAGE_KEY); } catch (__){}
-    return null;
-  }
-}
-
-function armViewportPersistenceOnUserInteraction(mapInstance) {
-  if (!mapInstance) return;
-  const mapContainer = mapInstance.getContainer();
-  if (!mapContainer) return;
-
-  mapContainer.addEventListener("pointerdown", () => {
-    userViewportInteractionArmed = true;
-  }, { passive: true });
-
-  mapContainer.addEventListener("wheel", () => {
-    userViewportInteractionArmed = true;
-  }, { passive: true });
-
-  mapContainer.addEventListener("touchstart", () => {
-    userViewportInteractionArmed = true;
-  }, { passive: true });
-}
-
-async function getFrictionlessInitialCoords() {
-  if (!navigator?.geolocation) return null;
-
-  try {
-    if (!navigator.permissions?.query) return null;
-    const permissionState = await navigator.permissions.query({ name: "geolocation" });
-    if (permissionState?.state !== "granted") return null;
-
-    const pos = await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        enableHighAccuracy: true,
-        timeout: 3000,
-        maximumAge: 30000
-      });
-    });
-
-    const lat = toFiniteNumber(pos?.coords?.latitude);
-    const lon = toFiniteNumber(pos?.coords?.longitude);
-    if (!isValidLatLng(lat, lon)) return null;
-    return { type: "coords", lat, lon, zoom: ENTRY_ZOOM };
-  } catch (_) {
-    return null;
-  }
-}
-
-async function getIpBasedInitialCoords() {
-  let timeoutId = null;
-  try {
-    const controller = new AbortController();
-    timeoutId = window.setTimeout(() => controller.abort(), 3000);
-    const res = await fetch("https://ipapi.co/json/", {
-      signal: controller.signal,
-      cache: "no-store"
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const lat = toFiniteNumber(data?.latitude ?? data?.lat);
-    const lon = toFiniteNumber(data?.longitude ?? data?.lon ?? data?.lng);
-    if (!isValidLatLng(lat, lon)) return null;
-    return { type: "coords", lat, lon, zoom: ENTRY_ZOOM };
-  } catch (_) {
-    return null;
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
-async function resolveInitialViewport() {
-  const incoming = parseIncomingViewport();
-  if (incoming?.hasIncomingViewport) return incoming;
-
-  const stored = readStoredViewport();
-  if (stored) return stored;
-
-  const gpsGranted = await getFrictionlessInitialCoords();
-  if (gpsGranted) return gpsGranted;
-
-  const ipBased = await getIpBasedInitialCoords();
-  if (ipBased) return ipBased;
-
-  return { hasIncomingViewport: false, type: "default" };
-}
-
-let _mapResizeRAF = false;
-
-function scheduleMapInvalidateSize() {
-  if (!map || _mapResizeRAF) return;
-  _mapResizeRAF = true;
-  requestAnimationFrame(() => {
-    _mapResizeRAF = false;
-    try { map.invalidateSize(false); } catch (_) {}
-  });
-}
-
-function debounce(callback, delayMs) {
-  let timerId = null;
-  return (...args) => {
-    if (timerId) clearTimeout(timerId);
-    timerId = window.setTimeout(() => {
-      timerId = null;
-      callback(...args);
-    }, delayMs);
+function normalizeGeoQueryOriginState(raw, site = SITE_ID) {
+  if (!raw || raw.site !== site) return null;
+  const centerLat = toFiniteNumber(raw.map?.centerLat);
+  const centerLon = toFiniteNumber(raw.map?.centerLon);
+  const zoom = toFiniteNumber(raw.map?.zoom);
+  const queryLat = toFiniteNumber(raw.queryPoint?.lat);
+  const queryLon = toFiniteNumber(raw.queryPoint?.lon);
+  const west = toFiniteNumber(raw.map?.bounds?.west);
+  const south = toFiniteNumber(raw.map?.bounds?.south);
+  const east = toFiniteNumber(raw.map?.bounds?.east);
+  const north = toFiniteNumber(raw.map?.bounds?.north);
+  const savedAt = toFiniteNumber(raw.savedAt) || Date.now();
+  const maxAgeMs = 12 * 60 * 60 * 1000;
+  if (!validLat(centerLat) || !validLon(centerLon) || !validZoom(zoom)) return null;
+  if (!validLat(queryLat) || !validLon(queryLon)) return null;
+  if (!validLon(west) || !validLon(east) || !validLat(south) || !validLat(north) || !(west < east) || !(south < north)) return null;
+  if (Date.now() - savedAt > maxAgeMs) return null;
+  return {
+    version: 1,
+    site,
+    source: "geoquery",
+    savedAt,
+    queryPoint: { lat: queryLat, lon: queryLon },
+    map: { centerLat, centerLon, zoom, basemap: normalizeBasemap(raw.map?.basemap), bounds: { west, south, east, north } },
+    navigation: { from: raw.navigation?.from || "index", crossAccess: raw.navigation?.crossAccess === true || raw.navigation?.from === "crossaccess" }
   };
 }
 
-function syncMapSize() {
-  if (!map) return;
-  requestAnimationFrame(() => {
-    try { map.invalidateSize(false); } catch (_) {}
+function readOriginStateFromUrl(site = SITE_ID) {
+  const params = new URLSearchParams(window.location.search);
+  const finiteParam = (name) => toFiniteNumber(params.get(name));
+  const centerLat = finiteParam("mapCenterLat") ?? finiteParam("viewLat");
+  const centerLon = finiteParam("mapCenterLon") ?? finiteParam("viewLon");
+  const zoom = finiteParam("mapZoom") ?? finiteParam("zoom");
+  const queryLat = finiteParam("queryLat") ?? finiteParam("lat");
+  const queryLon = finiteParam("queryLon") ?? finiteParam("lon");
+  const west = finiteParam("viewWest");
+  const south = finiteParam("viewSouth");
+  const east = finiteParam("viewEast");
+  const north = finiteParam("viewNorth");
+  return normalizeGeoQueryOriginState({ version: 1, site, source: "geoquery", savedAt: Date.now(), queryPoint: { lat: queryLat, lon: queryLon }, map: { centerLat, centerLon, zoom, basemap: params.get("basemap"), bounds: { west, south, east, north } }, navigation: { from: params.get("from") || "index", crossAccess: params.get("from") === "crossaccess" || params.get("source") === "crossaccess" } }, site);
+}
+
+function readOriginStateFromHistory(site = SITE_ID) {
+  return normalizeGeoQueryOriginState(history.state?.geoQueryOrigin, site);
+}
+
+function readOriginStateFromSessionStorage(site = SITE_ID) {
+  try { return normalizeGeoQueryOriginState(JSON.parse(sessionStorage.getItem(getGeoQueryOriginStorageKey(site)) || "null"), site); }
+  catch { return null; }
+}
+
+function resolveViewportRestoreState(site = SITE_ID) {
+  return readOriginStateFromUrl(site) || readOriginStateFromHistory(site) || readOriginStateFromSessionStorage(site) || null;
+}
+
+function captureGeoQueryOriginState({ site = SITE_ID, map, queryLat, queryLon, basemap, from }) {
+  const center = map.getCenter();
+  const bounds = map.getBounds();
+  return normalizeGeoQueryOriginState({ version: 1, site, source: "geoquery", savedAt: Date.now(), queryPoint: { lat: Number(queryLat), lon: Number(queryLon) }, map: { centerLat: center.lat, centerLon: center.lng, zoom: map.getZoom(), basemap, bounds: { west: bounds.getWest(), south: bounds.getSouth(), east: bounds.getEast(), north: bounds.getNorth() } }, navigation: { from: from || "index", crossAccess: from === "crossaccess" } }, site);
+}
+
+function persistOriginStateBeforeGeoQuery(originState) {
+  if (!originState) return;
+  try { sessionStorage.setItem(getGeoQueryOriginStorageKey(originState.site), JSON.stringify(originState)); } catch {}
+  const currentUrl = new URL(window.location.href);
+  const p = currentUrl.searchParams;
+  p.set("mapCenterLat", originState.map.centerLat); p.set("mapCenterLon", originState.map.centerLon); p.set("mapZoom", originState.map.zoom);
+  p.set("basemap", originState.map.basemap); p.set("queryLat", originState.queryPoint.lat); p.set("queryLon", originState.queryPoint.lon);
+  p.set("viewWest", originState.map.bounds.west); p.set("viewSouth", originState.map.bounds.south); p.set("viewEast", originState.map.bounds.east); p.set("viewNorth", originState.map.bounds.north);
+  p.set("restoreViewport", "1"); p.set("from", originState.navigation.crossAccess ? "crossaccess" : "geoquery");
+  history.replaceState({ ...(history.state || {}), geoQueryOrigin: originState }, "", currentUrl);
+}
+
+function appendOriginStateToGeoQueryUrl(url, originState) {
+  const target = new URL(url, window.location.href); const p = target.searchParams;
+  p.set("viewLat", originState.map.centerLat); p.set("viewLon", originState.map.centerLon); p.set("mapCenterLat", originState.map.centerLat); p.set("mapCenterLon", originState.map.centerLon);
+  p.set("zoom", originState.map.zoom); p.set("mapZoom", originState.map.zoom); p.set("basemap", originState.map.basemap); p.set("queryLat", originState.queryPoint.lat); p.set("queryLon", originState.queryPoint.lon);
+  p.set("viewWest", originState.map.bounds.west); p.set("viewSouth", originState.map.bounds.south); p.set("viewEast", originState.map.bounds.east); p.set("viewNorth", originState.map.bounds.north);
+  return target.pathname.split('/').pop() === 'geoquery.html' ? `./geoquery/geoquery.html?${p.toString()}` : target.toString();
+}
+
+function restoreMapViewport(mapInstance, restoreState) {
+  const state = normalizeGeoQueryOriginState(restoreState, SITE_ID); if (!mapInstance || !state) return false;
+  if (typeof switchBaseMap === "function") switchBaseMap(state.map.basemap);
+  mapInstance.setView([state.map.centerLat, state.map.centerLon], state.map.zoom, { animate: false });
+  if (typeof setSelectedPoint === "function") setSelectedPoint(state.queryPoint.lat, state.queryPoint.lon, "geoquery_restore");
+  else { selectedPoint = { lat: state.queryPoint.lat, lon: state.queryPoint.lon, source: "geoquery_restore", site: SITE_ID, timestamp: new Date().toISOString() }; window.selectedPoint = selectedPoint; }
+  viewportRestoreApplied = true; geoQueryRestoreState = state; return true;
+}
+
+function installGeoQueryViewportRestoreHandlers() {
+  window.addEventListener("pageshow", (event) => { if (!event.persisted) return; const state = resolveViewportRestoreState(SITE_ID); if (state && map) { restoreMapViewport(map, state); setTimeout(() => map.invalidateSize(false), 0); } });
+  window.addEventListener("popstate", (event) => { const state = normalizeGeoQueryOriginState(event.state?.geoQueryOrigin, SITE_ID) || resolveViewportRestoreState(SITE_ID); if (state && map) restoreMapViewport(map, state); });
+}
+
+const REGIONES_PATH = "capas_selector/regiones.json";
+const GEONEMO_SEARCH_PATH = "./capas_tosearch/geonemo_tosearch_areas.geojson";
+const GEONEMO_SEARCH_MAX_RESULTS = 8;
+let regionesSelector = [];
+let geoNemoSearchIndex = [];
+let geoNemoSearchResults = [];
+let geoNemoSearchActiveIndex = -1;
+let geoNemoSearchMarker = null;
+let summaryConfig = null;
+let summaryFeaturesByLayer = {};
+const LABEL_CAPACITY_CONFIG_PATH = "./capas_panel/label_capacity_config.json";
+const DEFAULT_LABEL_CAPACITY_CONFIG = { labels_per_cm2: 2, label_font_height_mm: 4 };
+let labelCapacityConfig = { ...DEFAULT_LABEL_CAPACITY_CONFIG };
+
+async function loadLabelDensityConfig() {
+  labelCapacityConfig = { ...DEFAULT_LABEL_CAPACITY_CONFIG };
+
+  try {
+    const response = await fetch(LABEL_CAPACITY_CONFIG_PATH, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const config = await response.json();
+    const labelsPerCm2 = Number(config?.labels_per_cm2);
+    const labelFontHeightMm = Number(config?.label_font_height_mm);
+
+    labelCapacityConfig = {
+      labels_per_cm2: Number.isFinite(labelsPerCm2) && labelsPerCm2 > 0 ? labelsPerCm2 : DEFAULT_LABEL_CAPACITY_CONFIG.labels_per_cm2,
+      label_font_height_mm: Number.isFinite(labelFontHeightMm) && labelFontHeightMm > 0 ? labelFontHeightMm : DEFAULT_LABEL_CAPACITY_CONFIG.label_font_height_mm
+    };
+  } catch (error) {
+    console.warn("[GeoNEMO Labels] label_capacity_config.json no disponible o inválido; usando valores por defecto.", error);
+  }
+
+  applyGeoNemoLabelFontSize();
+  console.log("[GeoNEMO Labels] labels_per_cm2:", labelCapacityConfig.labels_per_cm2);
+  console.log("[GeoNEMO Labels] label_font_height_mm:", labelCapacityConfig.label_font_height_mm);
+}
+
+function applyGeoNemoLabelFontSize() {
+  if (!document?.documentElement) return;
+  document.documentElement.style.setProperty(
+    "--geox-label-font-size",
+    `${labelCapacityConfig.label_font_height_mm * 3.7795}px`
+  );
+}
+
+function getLabelDensityMinZoom() {
+  return 0;
+}
+
+function isCrossAccessNavigationFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return (
+    params.get(CROSS_ACCESS_PARAM_NAME) === CROSS_ACCESS_PARAM_VALUE ||
+    params.get("source") === CROSS_ACCESS_PARAM_VALUE ||
+    params.get("crossAccess") === "1"
+  );
+}
+
+function getInitialCrossAccessStateFromUrl() {
+  if (initialCrossAccessState) return initialCrossAccessState;
+
+  const params = new URLSearchParams(window.location.search);
+
+  const from = params.get("from");
+  const lat = parseFloat(params.get("lat"));
+  const lon = parseFloat(params.get("lon"));
+  const viewLat = parseFloat(params.get("viewLat"));
+  const viewLon = parseFloat(params.get("viewLon"));
+  const zoom = parseFloat(params.get("zoom"));
+  const requestedBasemap = (params.get("basemap") || "osm").toLowerCase();
+  const basemap = requestedBasemap === "sat" ? "sat" : "osm";
+  const isGeoQueryReturn = from === "geoquery";
+  const hasReturnViewport = Number.isFinite(viewLat) && Number.isFinite(viewLon) && Number.isFinite(zoom);
+  const hasPointViewport = Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(zoom);
+
+  console.log("[GeoX navigation receive]", {
+    from,
+    lat,
+    lon,
+    viewLat,
+    viewLon,
+    zoom,
+    basemap
+  });
+
+  initialCrossAccessState = {
+    viewport: isGeoQueryReturn && hasReturnViewport
+      ? { lat: viewLat, lon: viewLon, zoom }
+      : hasPointViewport
+        ? { lat, lon, zoom }
+        : null,
+    basemap
+  };
+
+  return initialCrossAccessState;
+}
+
+function getInitialViewportFromUrl() {
+  return getInitialCrossAccessStateFromUrl().viewport;
+}
+
+function getInitialBasemapFromUrl() {
+  return getInitialCrossAccessStateFromUrl().basemap;
+}
+
+
+let userLocationMarker = null;
+
+function openGeoQueryFromLatLng(lat, lon) {
+  if (!map || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  const center = map.getCenter();
+  const bounds = map.getBounds();
+  const zoom = map.getZoom();
+  const basemap = currentBasemap || "osm";
+  const url =
+    `./geoquery/geoquery.html?site=${SITE_ID}` +
+    `&lat=${encodeURIComponent(lat)}` +
+    `&lon=${encodeURIComponent(lon)}` +
+    `&viewLat=${encodeURIComponent(center.lat)}` +
+    `&viewLon=${encodeURIComponent(center.lng)}` +
+    `&viewWest=${encodeURIComponent(bounds.getWest())}` +
+    `&viewSouth=${encodeURIComponent(bounds.getSouth())}` +
+    `&viewEast=${encodeURIComponent(bounds.getEast())}` +
+    `&viewNorth=${encodeURIComponent(bounds.getNorth())}` +
+    `&zoom=${encodeURIComponent(zoom)}` +
+    `&basemap=${encodeURIComponent(basemap)}` +
+    `&from=index`;
+
+  const originState = captureGeoQueryOriginState({ site: SITE_ID, map, queryLat: lat, queryLon: lon, basemap, from: isCrossAccessNavigationFromUrl() ? "crossaccess" : "index" });
+  persistOriginStateBeforeGeoQuery(originState);
+  window.location.href = appendOriginStateToGeoQueryUrl(url, originState);
+}
+
+function captureSelectedPoint(event, featureContext = null) {
+  const latlng = event?.latlng || event;
+  if (!latlng || !Number.isFinite(latlng.lat) || !Number.isFinite(latlng.lng)) return null;
+
+  if (featureContext && window.L?.DomEvent && event?.originalEvent) {
+    L.DomEvent.stopPropagation(event);
+  }
+
+  const originalEvent = event?.originalEvent;
+  if (featureContext && originalEvent) originalEvent.__geoxFeatureContext = featureContext;
+
+  selectedPoint = {
+    lat: latlng.lat,
+    lon: latlng.lng,
+    source: featureContext ? "layer_click" : "map_click",
+    site: SITE_ID,
+    timestamp: new Date().toISOString()
+  };
+  selectedFeatureContext = featureContext || originalEvent?.__geoxFeatureContext || null;
+  window.selectedPoint = selectedPoint;
+  window.selectedFeatureContext = selectedFeatureContext;
+
+  if (event?.latlng) {
+    openGeoQueryFromLatLng(latlng.lat, latlng.lng);
+  }
+
+  return selectedPoint;
+}
+
+function initGeoQueryClickPropagationGuards() {
+  if (!window.L?.DomEvent) return;
+
+  [
+    "#control-bar",
+    "#territorial-panel",
+    "#search-box-wrapper",
+    "#mobile-map-controls",
+    "#main-footer",
+    ".leaflet-control"
+  ].forEach((selector) => {
+    document.querySelectorAll(selector).forEach((element) => {
+      L.DomEvent.disableClickPropagation(element);
+    });
   });
 }
 
-function attachMapResizeSync() {
-  const debouncedSync = debounce(syncMapSize, 120);
-  window.addEventListener("load", debouncedSync, { passive: true });
-  window.addEventListener("resize", debouncedSync, { passive: true });
-  window.addEventListener("orientationchange", debouncedSync, { passive: true });
-
-  const desktopLayoutMedia = window.matchMedia("(max-width: 1199px)");
-  if (typeof desktopLayoutMedia.addEventListener === "function") {
-    desktopLayoutMedia.addEventListener("change", debouncedSync);
-  } else if (typeof desktopLayoutMedia.addListener === "function") {
-    desktopLayoutMedia.addListener(debouncedSync);
-  }
-}
-
-const fileState = new Map();
-let GROUPS = [];
-const SEARCH_MAX_RESULTS = 12;
-const SEARCH_TEXT_KEYS = [
-  "nombre", "name", "label", "sitio", "denominacion",
-  "categoria", "tipo", "subtipo", "descripcion"
-];
-
-let searchState = {
-  entries: [],
-  dirty: true,
-  highlightLayer: null
-};
-
-/* ===========================
-   UI helpers
-=========================== */
-function toast(msg, ms = 2200) {
-  const el = document.getElementById("toast");
-  if (!el) return;
-  el.textContent = msg;
-  el.classList.add("show");
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.remove("show"), ms);
-}
-
-function fmtInt(n){ return (n ?? 0).toLocaleString("es-CL"); }
-
-function fmtArea(m2){
-  if (!isFinite(m2)) return "—";
-  const ha = m2 / 10000;
-  if (ha >= 1000){
-    const km2 = m2 / 1e6;
-    return `${km2.toLocaleString("es-CL", { maximumFractionDigits: 1 })} km²`;
-  }
-  return `${ha.toLocaleString("es-CL", { maximumFractionDigits: 1 })} ha`;
-}
-
-function nowIso(){ return new Date().toISOString(); }
-
-function pruneTrackEventCache(nowTs = Date.now()) {
-  for (const [key, ts] of _trackEventCache.entries()) {
-    if ((nowTs - ts) > TRACK_DEDUPE_WINDOW_MS) {
-      _trackEventCache.delete(key);
+function getLocationByGps() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Geolocation no disponible"));
+      return;
     }
-  }
-}
 
-function trackEvent(payload, options = {}) {
-  try {
-    if (!payload || typeof payload !== "object") return false;
-    const eventName = String(payload.event || "").trim();
-    if (!eventName) return false;
-
-    const nowTs = Date.now();
-    pruneTrackEventCache(nowTs);
-
-    const dedupeKey = options.dedupeKey || `${eventName}:${JSON.stringify(payload)}`;
-    if (options.dedupe !== false) {
-      const lastTs = _trackEventCache.get(dedupeKey);
-      if (lastTs && (nowTs - lastTs) <= TRACK_DEDUPE_WINDOW_MS) {
-        return false;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+          accuracy: position.coords.accuracy
+        });
+      },
+      (error) => {
+        reject(error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 60000
       }
-      _trackEventCache.set(dedupeKey, nowTs);
+    );
+  });
+}
+
+async function getLocationByIp() {
+  try {
+    const response = await fetch("https://ipapi.co/json/", {
+      cache: "no-store"
+    });
+
+    if (!response.ok) {
+      throw new Error("No se pudo obtener ubicación por IP");
     }
 
-    if (!Array.isArray(window.dataLayer)) {
-      window.dataLayer = [];
+    const data = await response.json();
+
+    const lat = parseFloat(data.latitude);
+    const lon = parseFloat(data.longitude);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      throw new Error("IP sin coordenadas válidas");
     }
 
-    if (TRACK_DEBUG) {
-      console.log("[GeoNEMO GTM] evento enviado", payload);
-    }
-
-    window.dataLayer.push(payload);
-    return true;
-  } catch (err) {
-    console.warn("[GeoNEMO] No se pudo enviar evento GTM:", err);
-    return false;
+    return { lat, lon };
+  } catch (error) {
+    console.warn("GeoX: ubicación por IP no disponible", error);
+    return null;
   }
 }
 
-window.trackEvent = trackEvent;
+function applyUserLocation(mapInstance, location, zoomLevel = 14) {
+  if (!mapInstance || !location) return;
 
-function bboxIntersects(b1, b2){
-  return !(b2[0] > b1[2] || b2[2] < b1[0] || b2[1] > b1[3] || b2[3] < b1[1]);
+  const lat = parseFloat(location.lat);
+  const lon = parseFloat(location.lon);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  mapInstance.setView([lat, lon], zoomLevel);
+
+  if (userLocationMarker) {
+    userLocationMarker.setLatLng([lat, lon]);
+  } else {
+    userLocationMarker = L.marker([lat, lon]).addTo(mapInstance);
+  }
+
+  captureSelectedPoint({ lat, lng: lon });
 }
 
-function bboxContainsLonLat(bb, lon, lat) {
-  return lon >= bb[0] && lon <= bb[2] && lat >= bb[1] && lat <= bb[3];
+async function initGeoXInitialLocation(mapInstance) {
+  const incomingViewport = getInitialViewportFromUrl();
+
+  if (incomingViewport) {
+    mapInstance.setView(
+      [incomingViewport.lat, incomingViewport.lon],
+      incomingViewport.zoom
+    );
+    return;
+  }
+
+  try {
+    const gpsLocation = await getLocationByGps();
+
+    if (gpsLocation) {
+      applyUserLocation(mapInstance, gpsLocation, window.GeoXLocationZoom || 11);
+      return;
+    }
+  } catch (error) {
+    console.warn("GeoX: GPS no disponible o no autorizado", error);
+  }
+
+  const ipLocation = await getLocationByIp();
+
+  if (ipLocation) {
+    applyUserLocation(mapInstance, ipLocation, window.GeoXLocationZoom || 11);
+    return;
+  }
+
+  console.warn("GeoX: se mantiene ubicación default del sitio");
 }
 
-function buildCrossSiteUrl(baseUrl) {
-  const url = new URL(baseUrl);
-  if (!map) return url.toString();
+function initGeoXMyLocationButton(mapInstance) {
+  const button =
+    document.getElementById("my-location-btn") ||
+    document.getElementById("locate-btn") ||
+    document.getElementById("btn-my-location") ||
+    document.querySelector(".my-location-btn") ||
+    document.querySelector(".locate-btn") ||
+    document.querySelector("[data-action='my-location']");
 
-  const center = map.getCenter();
-  const zoom = map.getZoom();
-  const bounds = map.getBounds();
+  if (!button) {
+    console.warn("GeoX: botón Mi ubicación no encontrado");
+    return;
+  }
 
-  const bbox = [
-    bounds.getNorth(),
-    bounds.getEast(),
-    bounds.getSouth(),
-    bounds.getWest()
-  ].join(",");
+  button.addEventListener("click", async () => {
+    try {
+      const gpsLocation = await getLocationByGps();
 
-  url.searchParams.set("lat", String(center.lat));
-  url.searchParams.set("lon", String(center.lng));
-  url.searchParams.set("zoom", String(zoom));
-  url.searchParams.set("bbox", bbox);
+      if (gpsLocation) {
+        applyUserLocation(mapInstance, gpsLocation, window.GeoXLocationZoom || 11);
+        return;
+      }
+    } catch (error) {
+      console.warn("GeoX: GPS no disponible desde botón", error);
+    }
+
+    const ipLocation = await getLocationByIp();
+
+    if (ipLocation) {
+      applyUserLocation(mapInstance, ipLocation, window.GeoXLocationZoom || 11);
+      return;
+    }
+
+    console.warn("GeoX: no se pudo determinar ubicación");
+  });
+}
+
+function getGeoXMapInstance() {
+  if (window.geoxMap && typeof window.geoxMap.getCenter === "function") {
+    return window.geoxMap;
+  }
+
+  if (window.map && typeof window.map.getCenter === "function") {
+    return window.map;
+  }
+
+  return null;
+}
+
+function getCurrentMapState() {
+  const mapInstance = getGeoXMapInstance();
+
+  if (!mapInstance) {
+    console.warn("GeoX: no se encontró instancia Leaflet para capturar estado del mapa.");
+    return null;
+  }
+
+  const center = mapInstance.getCenter();
+
+  return {
+    lat: center.lat,
+    lon: center.lng,
+    zoom: mapInstance.getZoom(),
+    basemap: currentBasemap || "osm"
+  };
+}
+
+function buildCrossAccessUrl(sitePath) {
+  const state = getCurrentMapState();
+  const url = new URL(sitePath, window.location.href);
+  url.searchParams.set(CROSS_ACCESS_PARAM_NAME, CROSS_ACCESS_PARAM_VALUE);
+
+  if (!state) return url.toString();
+
+  console.log("[GeoX cross_access send]", state);
+
+  url.searchParams.set("lat", state.lat.toFixed(6));
+  url.searchParams.set("lon", state.lon.toFixed(6));
+  url.searchParams.set("zoom", String(state.zoom));
+  url.searchParams.set("basemap", state.basemap);
+
   return url.toString();
 }
 
-function goToGeoIPT(e){
-  e.preventDefault();
+function getCurrentViewportParams() {
+  const state = getCurrentMapState();
 
-  trackEvent({
-    event: "geo_cross_navigation",
-    from: TRACK_SITE,
-    to: "geoipt",
-    method: "card"
-  }, { dedupeKey: "geo_cross_navigation:geoipt:card" });
+  if (!state) return "";
 
-  const base = "https://geoipt.cl/?utm_source=geonemo&utm_medium=card&utm_campaign=cruce_portales&utm_content=geoipt_lateral";
-  const url = buildCrossSiteUrl(base);
-  window.open(url, "_blank", "noopener");
-  return false;
+  const params = new URLSearchParams();
+  params.set("lat", state.lat.toFixed(6));
+  params.set("lon", state.lon.toFixed(6));
+  params.set("zoom", String(state.zoom));
+  params.set("basemap", state.basemap);
+  params.set(CROSS_ACCESS_PARAM_NAME, CROSS_ACCESS_PARAM_VALUE);
+
+  return params.toString();
 }
 
-function goToGeoEVA(e){
-  e.preventDefault();
+function isGeoXPortalLink(link) {
+  if (!link) return false;
 
-  trackEvent({
-    event: "geo_cross_navigation",
-    from: TRACK_SITE,
-    to: "geoeva",
-    method: "card"
-  }, { dedupeKey: "geo_cross_navigation:geoeva:card" });
+  const href = link.getAttribute("href") || "";
+  const target = link.getAttribute("data-geox-target") || "";
 
-  const base = "https://geoeva.cl/?utm_source=geonemo&utm_medium=card&utm_campaign=cruce_portales&utm_content=geoeva_lateral";
-  const url = buildCrossSiteUrl(base);
-  window.open(url, "_blank", "noopener");
-  return false;
+  const value = `${href} ${target}`.toLowerCase();
+
+  return (
+    value.includes("geoipt") ||
+    value.includes("geoeva") ||
+    value.includes("geonemo") ||
+    value.includes("geonoxa")
+  );
 }
 
-function goToGeoIPTMobile(e){
-  e.preventDefault();
+function initGeoXCrossPortalNavigation() {
+  document.addEventListener("click", function (event) {
+    const link = event.target.closest("a");
 
-  trackEvent({
-    event: "geo_cross_navigation",
-    from: TRACK_SITE,
-    to: "geoipt",
-    method: "link"
-  }, { dedupeKey: "geo_cross_navigation:geoipt:link" });
+    if (!isGeoXPortalLink(link)) return;
 
-  const base = "https://geoipt.cl/?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema";
-  const url = buildCrossSiteUrl(base);
-  window.open(url, "_blank", "noopener");
-  return false;
-}
+    const rawTarget =
+      link.getAttribute("data-geox-target") ||
+      link.getAttribute("href");
 
-function goToGeoEVAMobile(e){
-  e.preventDefault();
+    if (!rawTarget) return;
 
-  trackEvent({
-    event: "geo_cross_navigation",
-    from: TRACK_SITE,
-    to: "geoeva",
-    method: "link"
-  }, { dedupeKey: "geo_cross_navigation:geoeva:link" });
+    event.preventDefault();
 
-  const base = "https://geoeva.cl/?utm_source=geonemo&utm_medium=mobile_bar&utm_campaign=ecosistema";
-  const url = buildCrossSiteUrl(base);
-  window.open(url, "_blank", "noopener");
-  return false;
-}
-
-window.goToGeoIPT = goToGeoIPT;
-window.goToGeoEVA = goToGeoEVA;
-window.goToGeoIPTMobile = goToGeoIPTMobile;
-window.goToGeoEVAMobile = goToGeoEVAMobile;
-
-/* ===========================
-   Turf check
-=========================== */
-function assertTurfReady() {
-  const ok =
-    typeof window.turf !== "undefined" &&
-    turf &&
-    typeof turf.bbox === "function" &&
-    typeof turf.area === "function" &&
-    typeof turf.booleanPointInPolygon === "function" &&
-    typeof turf.polygonToLine === "function" &&
-    typeof turf.pointToLineDistance === "function" &&
-    typeof turf.bboxPolygon === "function" &&
-    typeof turf.booleanIntersects === "function";
-
-  if (!ok) {
-    console.error("[GeoNEMO] Turf.js no está cargado o faltan funciones. Revisa index.html (script turf).");
-    toast("⚠️ Falta Turf.js (no puedo calcular). Revisa index.html.", 3800);
-  }
-  return ok;
-}
-
-/* ===========================
-   localStorage out
-=========================== */
-function saveOut(payload){
-  try{ localStorage.setItem(OUT_STORAGE_KEY, JSON.stringify(payload)); }
-  catch(e){ console.warn("No pude guardar salida", e); }
-}
-
-function loadOut(){
-  try{
-    const raw = localStorage.getItem(OUT_STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch(e){ return null; }
-}
-
-function openOut(context = {}){
-  const outUrl = new URL("mapaout.html", window.location.href);
-  const radiusKm = resolveSearchRadiusKm();
-  outUrl.searchParams.set("radius", String(radiusKm));
-  if (Number.isFinite(context.lat)) outUrl.searchParams.set("lat", String(context.lat));
-  if (Number.isFinite(context.lng)) outUrl.searchParams.set("lon", String(context.lng));
-  if (context.bbox) outUrl.searchParams.set("bbox", context.bbox);
-  window.open(outUrl.toString(), "_blank", "noopener");
-}
-
-function sanitizeSearchRadiusKm(raw) {
-  const value = Number(raw);
-  return SEARCH_RADIUS_VALUES.includes(value) ? value : null;
-}
-
-function resolveSearchRadiusKm() {
-  const params = new URLSearchParams(window.location.search || "");
-  const fromUrl = sanitizeSearchRadiusKm(params.get("radius") ?? params.get("search_radius"));
-  if (fromUrl != null) return fromUrl;
-  const fromStorage = sanitizeSearchRadiusKm(localStorage.getItem(SEARCH_RADIUS_STORAGE_KEY));
-  return fromStorage ?? 100;
-}
-
-function initTerritorialPanelUI() {
-  const panel = document.getElementById("territorialPanel");
-  const toggle = document.getElementById("territorialPanelToggle");
-  const body = document.getElementById("territorialPanelBody");
-  if (!panel || !toggle || !body) return;
-
-  const key = "geonemo_territorial_panel_collapsed";
-  const isMobile = window.matchMedia("(max-width: 720px)").matches;
-  const stored = localStorage.getItem(key);
-  const startCollapsed = stored == null ? isMobile : stored === "true";
-
-  const apply = (collapsed) => {
-    panel.classList.toggle("is-collapsed", collapsed);
-    body.hidden = collapsed;
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-    localStorage.setItem(key, String(collapsed));
-  };
-
-  apply(startCollapsed);
-  toggle.addEventListener("click", () => {
-    apply(!panel.classList.contains("is-collapsed"));
+    window.location.href = buildCrossAccessUrl(rawTarget);
   });
 }
 
-function initSearchRadiusUI() {
-  const root = document.getElementById("searchRadiusGroup");
-  if (!root) return;
-  const active = resolveSearchRadiusKm();
-  localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(active));
-  window.GEONEMO_SEARCH_RADIUS_KM = active;
-  root.querySelectorAll("input[name='searchRadius']").forEach((radio) => {
-    const val = sanitizeSearchRadiusKm(radio.value);
-    radio.checked = val === active;
-    radio.addEventListener("change", () => {
-      const next = sanitizeSearchRadiusKm(radio.value) ?? 100;
-      window.GEONEMO_SEARCH_RADIUS_KM = next;
-      localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(next));
-    });
-  });
-}
-
-/* ===========================
-   Preferencias mapa
-=========================== */
-function readMapPref(){
-  try { return JSON.parse(localStorage.getItem(MAP_PREF_KEY) || "{}"); }
-  catch { return {}; }
-}
-
-function writeMapPref(pref){
-  try { localStorage.setItem(MAP_PREF_KEY, JSON.stringify(pref || {})); }
-  catch {}
-}
-
-function syncMapPrefFromCurrentLayers(){
-  if (!map || !satOverlay) return;
-  const hasSat = map.hasLayer(satOverlay);
-  writeMapPref({
-    base: "OpenStreetMap",
-    overlay: hasSat ? "Esri Satélite" : null,
-    overlayOpacity: 0.25
-  });
-}
-
-function initStatsbarAutoHeight() {
-  const root = document.documentElement;
-  const stats = document.querySelector(".statsbar");
-  if (!stats) return;
-
-  let raf = 0;
-  const apply = () => {
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      raf = 0;
-
-      const h = Math.ceil(stats.getBoundingClientRect().height);
-      const prev = parseInt(getComputedStyle(root).getPropertyValue("--statsbar-h")) || 0;
-      if (Math.abs(h - prev) <= 1) return;
-
-      root.style.setProperty("--statsbar-h", `${h}px`);
-      scheduleMapInvalidateSize();
-    });
-  };
-
-  apply();
-
-  if ("ResizeObserver" in window) {
-    const ro = new ResizeObserver(() => apply());
-    ro.observe(stats);
-    window.addEventListener("resize", apply, { passive: true });
-    window.__syncStatsbarHeight = apply;
-  } else {
-    window.addEventListener("resize", apply, { passive: true });
-    window.__syncStatsbarHeight = apply;
-  }
-}
-
-function initTopbarAutoHeight() {
-  const root = document.documentElement;
-  const top = document.querySelector(".topbar");
-  if (!top) return;
-
-  let raf = 0;
-  const apply = () => {
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      raf = 0;
-      const h = Math.ceil(top.getBoundingClientRect().height);
-      const prev = parseInt(getComputedStyle(root).getPropertyValue("--topbar-h")) || 0;
-      if (Math.abs(h - prev) <= 1) return;
-      root.style.setProperty("--topbar-h", `${h}px`);
-      scheduleMapInvalidateSize();
-    });
-  };
-
-  apply();
-
-  if ("ResizeObserver" in window) {
-    const ro = new ResizeObserver(() => apply());
-    ro.observe(top);
-    window.addEventListener("resize", apply, { passive: true });
-    window.__syncTopbarHeight = apply;
-  } else {
-    window.addEventListener("resize", apply, { passive: true });
-    window.__syncTopbarHeight = apply;
-  }
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  initStatsbarAutoHeight();
-  initTopbarAutoHeight();
+document.addEventListener("DOMContentLoaded", async () => {
+  await loadLabelDensityConfig();
+  await iniciarMapa();
+  initGeoQueryClickPropagationGuards();
+  await cargarRegionesSelector();
+  conectarRegionSelector();
+  await GeoXViewport.initializeInitialViewport({ map, siteId: SITE_ID, siteConfig: window.geoxSiteConfig, regionSelector: document.getElementById("region-selector"), executeExistingRegionSearch: moverViewportPorRegion, applyBasemap: switchBaseMap });
+  initialViewportCompleted = true;
+  viewportRestoreApplied = GeoXViewport.readCrossAccessViewport(new URLSearchParams(window.location.search))?.isValid === true;
+  conectarBaseMapToggle();
+  initGeoNemoDesktopLabelControls();
+  initGeoNemoMobileLabelToggle();
+  initGeoXMyLocationButton(map);
+  initGeoXCrossPortalNavigation();
+  initGeoNemoSearch();
 });
 
 
-
-
-/* ===========================
-   Map init
-=========================== */
-
-function applyInitialViewport() {
-  if (!map) return false;
-
-  if (applyIncomingViewport(map)) {
-    return true;
-  }
-
-  if (initialViewport?.type === "bbox" && initialViewport?.bounds) {
-    map.fitBounds(initialViewport.bounds, {
-      animate: false,
-      padding: [20, 20],
-      maxZoom: 12
-    });
-    incomingViewportApplied = false;
-    return true;
-  }
-
-  if (initialViewport?.type === "coords") {
-    map.setView(
-      [initialViewport.lat, initialViewport.lon],
-      initialViewport.zoom,
-      { animate: false }
-    );
-    incomingViewportApplied = false;
-    return true;
-  }
-
-  map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: false });
-  incomingViewportApplied = false;
-  return false;
-}
-
-function applyIncomingViewport(mapInstance) {
-  if (!mapInstance || !initialViewport?.hasIncomingViewport) return false;
-
-  if (initialViewport?.type === "bbox" && initialViewport?.bounds) {
-    mapInstance.fitBounds(initialViewport.bounds, {
-      animate: false,
-      padding: [20, 20],
-      maxZoom: 12
-    });
-    incomingViewportApplied = true;
-    persistCurrentViewport(mapInstance);
-    return true;
-  }
-
-  if (initialViewport?.type === "coords") {
-    mapInstance.setView(
-      [initialViewport.lat, initialViewport.lon],
-      initialViewport.zoom,
-      { animate: false }
-    );
-    incomingViewportApplied = true;
-    persistCurrentViewport(mapInstance);
-    return true;
-  }
-
-  return false;
-}
-
-function resolveBootstrapView(viewport) {
-  if (
-    viewport?.type === "coords" &&
-    isFinite(viewport.lat) &&
-    isFinite(viewport.lon) &&
-    isFinite(viewport.zoom) &&
-    viewport.zoom > 0
-  ) {
-    return {
-      center: [viewport.lat, viewport.lon],
-      zoom: viewport.zoom
-    };
-  }
-
-  if (viewport?.type === "bbox" && viewport?.bounds) {
-    const c = viewport.bounds.getCenter();
-    return {
-      center: [c.lat, c.lng],
-      zoom: 7
-    };
-  }
-
-  return {
-    center: HOME_VIEW.center,
-    zoom: HOME_VIEW.zoom
-  };
-}
-
-function crearMapa(initialViewport) {
-  const bootstrap = resolveBootstrapView(initialViewport);
-
-  map = L.map("map", {
-    zoomControl: true,
-    preferCanvas: true,
-    minZoom: 4,
-    maxZoom: 19,
-    center: bootstrap.center,
-    zoom: bootstrap.zoom
-  });
-  applyInitialViewport();
-
-  topoBase = L.tileLayer(
-    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {
-      name: "OpenStreetMap",
-      maxZoom: 19,
-      opacity: 1.0,
-      attribution: "&copy; OpenStreetMap contributors",
-      crossOrigin: true,
-      updateWhenIdle: true
-    }
-  );
-
-  satOverlay = L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    {
-      name: "Satélite",
-      maxZoom: 19,
-      attribution: "Tiles &copy; Esri",
-      crossOrigin: true,
-      updateWhenIdle: true
-    }
-  );
-
-  topoBase.addTo(map);
-  L.control.layers({ "OSM": topoBase, "Satélite": satOverlay }, null, {
-    position: "topright",
-    collapsed: false
-  }).addTo(map);
-
-  addMyLocationControl();
-
-  writeMapPref({
-    base: "OpenStreetMap",
-    overlay: null,
-    overlayOpacity: 0
-  });
-
-  map.on("moveend", scheduleStatsUpdate);
-  map.on("zoomend", scheduleStatsUpdate);
-  map.on("click", onMapClick);
-
-  armViewportPersistenceOnUserInteraction(map);
-  const debouncedPersistViewport = debounce(() => {
-    if (!userViewportInteractionArmed) return;
-    persistCurrentViewport(map);
-  }, 500);
-  map.on("moveend", debouncedPersistViewport);
-}
-
-function centerMapOnUserPosition() {
-  if (!navigator.geolocation || !map) {
-    toast("⚠️ Geolocalización no soportada", 2400);
-    return;
-  }
-
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-
-      if (userMarker) map.removeLayer(userMarker);
-      userMarker = L.circleMarker([lat, lng], {
-        radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
-      }).addTo(map);
-
-      map.setView([lat, lng], USER_LOCATE_ZOOM, { animate: true });
-      persistCurrentViewport(map);
-
-      toast("🎯 Ubicación detectada", 1400);
-      setTimeout(() => syncMapSize(), 150);
-      scheduleStatsUpdate();
-    },
-    (err) => {
-      console.warn("[GeoNEMO] No pude obtener ubicación:", err);
-      toast("⚠️ No pude obtener tu ubicación", 2600);
-    },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-  );
-}
-
-function addMyLocationControl() {
-  if (!map || !L?.Control) return;
-
-  const MyLocationControl = L.Control.extend({
-    options: { position: "topleft" },
-    onAdd() {
-      const container = L.DomUtil.create("div", "leaflet-bar geonemo-locate-control");
-      const button = L.DomUtil.create("button", "geonemo-locate-btn", container);
-      button.type = "button";
-      button.title = "Mi ubicación";
-      button.setAttribute("aria-label", "Mi ubicación");
-      button.textContent = "📍";
-
-      L.DomEvent.disableClickPropagation(container);
-      L.DomEvent.on(button, "click", (ev) => {
-        L.DomEvent.preventDefault(ev);
-        centerMapOnUserPosition();
-      });
-
-      return container;
-    }
-  });
-
-  map.addControl(new MyLocationControl());
-}
-
-/* ===========================
-   Auto-center GPS al cargar
-=========================== */
-function tryAutoCenterOnUser() {
-  if (!navigator.geolocation || !map) return;
-
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-
-      if (userMarker) map.removeLayer(userMarker);
-      userMarker = L.circleMarker([lat, lng], {
-        radius: 7, weight: 2, opacity: 1, fillOpacity: 0.35
-      }).addTo(map);
-
-      // Solo centrar automáticamente si NO viene viewport externo.
-
-      if (!incomingViewportApplied) {
-        map.setView([lat, lng], ENTRY_ZOOM, { animate: true });
-      }
-
-      toast("🎯 Centrado en tu ubicación", 1400);
-      setTimeout(() => syncMapSize(), 150);
-      scheduleStatsUpdate();
-    },
-    () => {},
-    { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
-  );
-}
-
-/* ===========================
-   Regiones
-=========================== */
-async function cargarRegiones() {
-  const sel = document.getElementById("selRegion");
-  if (!sel) return;
-
-  sel.innerHTML = `<option value="">Selecciona región…</option>`;
-
-  let data;
-  try {
-    const res = await fetch(REGIONES_URL, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    data = await res.json();
-  } catch (e) {
-    console.error(e);
-    toast("⚠️ No pude cargar data/regiones.json", 2500);
-    return;
-  }
-
-  const regiones = Array.isArray(data) ? data : (data.regiones || []);
-  for (const r of regiones) {
-    const opt = document.createElement("option");
-    opt.value = String(r.codigo_ine ?? r.id ?? r.nombre ?? "");
-    opt.textContent = r.nombre ?? opt.value;
-    opt.dataset.center = JSON.stringify(r.centro || r.center || null);
-    opt.dataset.zoom = String(r.zoom ?? 7);
-    sel.appendChild(opt);
-  }
-
-  sel.addEventListener("change", () => {
-    const opt = sel.options[sel.selectedIndex];
-    if (!opt || !opt.value) return;
-
-    let c = null;
-    try { c = JSON.parse(opt.dataset.center); } catch(_) {}
-
-    let center = null;
-    if (Array.isArray(c) && c.length >= 2) {
-      center = [Number(c[0]), Number(c[1])];
-    }
-    if (!center && c && typeof c === "object") {
-      const lat = (c.lat ?? c.latitude ?? c.y);
-      const lng = (c.lng ?? c.lon ?? c.longitude ?? c.x);
-      if (lat != null && lng != null) center = [Number(lat), Number(lng)];
-    }
-
-    if (center && isFinite(center[0]) && isFinite(center[1])) {
-      // El usuario eligió una región → siempre navegar, sin importar
-      // si hay viewport externo.
-      map.setView(center, REGION_ZOOM, { animate: true });
-      setTimeout(() => syncMapSize(), 150);
-      scheduleStatsUpdate();
-    } else {
-      console.warn("[GeoNEMO] Región sin centro válido:", opt.value, opt.dataset.center);
-      toast("⚠️ Esta región no tiene centro (revisa data/regiones.json)", 2400);
-    }
-  });
-
-
-}
-
-/* ===========================
-   Path helpers
-=========================== */
-function dirname(path){
-  const s = String(path || "");
-  const i = s.lastIndexOf("/");
-  if (i <= 0) return "";
-  return s.slice(0, i + 1);
-}
-
-function isAbsUrl(u){
-  return /^https?:\/\//i.test(u) || u.startsWith("/");
-}
-
-function joinPath(baseDir, rel){
-  if (!baseDir) return rel;
-  if (baseDir.endsWith("/") && rel.startsWith("/")) return baseDir + rel.slice(1);
-  if (!baseDir.endsWith("/") && !rel.startsWith("/")) return baseDir + "/" + rel;
-  return baseDir + rel;
-}
-
-function resolveGroupFileUrl(groupUrl, filePath){
-  const f = String(filePath || "");
-  if (isAbsUrl(f)) return f;
-  const baseDir = dirname(groupUrl);
-  return joinPath(baseDir, f);
-}
-
-function normalizeSearchText(value){
+function normalizeGeoNemoSearchText(value) {
   return String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -1012,1034 +607,1533 @@ function normalizeSearchText(value){
     .trim();
 }
 
-function firstNonEmpty(props, keys){
-  if (!props || typeof props !== "object") return "";
-  for (const key of keys){
-    const val = props[key];
-    if (val == null) continue;
-    const txt = String(val).trim();
-    if (txt) return txt;
+function getGeoNemoSearchLabel(props) {
+  return [props.nombre_area, props.tipo_area, props.region]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function getGeoNemoSearchPoint(feature) {
+  const props = feature && feature.properties ? feature.properties : {};
+
+  if (feature && feature.geometry && feature.geometry.type === "Point" && Array.isArray(feature.geometry.coordinates)) {
+    const lon = Number(feature.geometry.coordinates[0]);
+    const lat = Number(feature.geometry.coordinates[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon };
   }
+
+  const lat = Number(props.lat);
+  const lon = Number(props.lon);
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+}
+
+function getGeoNemoSearchBBox(feature) {
+  const props = feature && feature.properties ? feature.properties : {};
+  const rawBbox = props.bbox || (feature && feature.bbox);
+  let bbox = rawBbox;
+
+  if (typeof rawBbox === "string") {
+    try {
+      bbox = JSON.parse(rawBbox);
+    } catch (error) {
+      bbox = rawBbox.split(",").map((value) => value.trim());
+    }
+  }
+
+  if (!Array.isArray(bbox) || bbox.length !== 4) return null;
+
+  const [minLon, minLat, maxLon, maxLat] = bbox.map(Number);
+  if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) return null;
+  if (minLon >= maxLon || minLat >= maxLat) return null;
+
+  return { minLon, minLat, maxLon, maxLat };
+}
+
+function clearGeoNemoSearchResults() {
+  geoNemoSearchResults = [];
+  geoNemoSearchActiveIndex = -1;
+
+  const container = document.getElementById("search-results");
+  if (!container) return;
+
+  container.innerHTML = "";
+  container.hidden = true;
+  container.classList.remove("is-open", "is-visible");
+}
+
+async function loadGeoNemoSearchIndex() {
+  try {
+    const response = await fetch(GEONEMO_SEARCH_PATH, { cache: "no-store" });
+    if (!response.ok) throw new Error(`No se pudo cargar ${GEONEMO_SEARCH_PATH}`);
+
+    const geojson = await response.json();
+    geoNemoSearchIndex = (Array.isArray(geojson.features) ? geojson.features : [])
+      .map((feature) => {
+        const props = feature.properties || {};
+        const label = getGeoNemoSearchLabel(props) || String(props.nombre_busq || props.nombre_area || "Área sin nombre");
+        const searchText = normalizeGeoNemoSearchText([
+          props.nombre_busq,
+          props.nombre_area,
+          props.tipo_area,
+          props.region,
+          props.comuna,
+          props.provincia,
+          props.territorio,
+          props.nombre_unidad,
+          props.familia
+        ].filter(Boolean).join(" "));
+
+        return { feature, props, label, searchText };
+      })
+      .filter((item) => item.searchText);
+
+    console.log("[GeoNEMO Search] índice cargado", geoNemoSearchIndex.length);
+  } catch (error) {
+    geoNemoSearchIndex = [];
+    console.warn("[GeoNEMO Search] no se pudo cargar el índice", error);
+  }
+}
+
+function searchGeoNemoAreas(query) {
+  const normalizedQuery = normalizeGeoNemoSearchText(query);
+  if (normalizedQuery.length < 2) return [];
+
+  return geoNemoSearchIndex
+    .filter((item) => item.searchText.includes(normalizedQuery))
+    .slice(0, GEONEMO_SEARCH_MAX_RESULTS);
+}
+
+function renderGeoNemoSearchResults(results) {
+  const container = document.getElementById("search-results");
+  if (!container) return;
+
+  geoNemoSearchResults = results;
+  geoNemoSearchActiveIndex = -1;
+  container.innerHTML = "";
+
+  if (!results.length) {
+    clearGeoNemoSearchResults();
+    return;
+  }
+
+  results.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "search-result-item";
+    button.textContent = item.label;
+    button.addEventListener("click", () => selectGeoNemoSearchResult(index));
+    container.appendChild(button);
+  });
+
+  container.hidden = false;
+  container.classList.add("is-open", "is-visible");
+}
+
+function selectGeoNemoSearchResult(index) {
+  const item = geoNemoSearchResults[index];
+  if (!item || !map) return;
+
+  const selectedName = String(item.props.nombre_area || item.label || "").trim();
+  console.log("[GeoNEMO Search] resultado seleccionado:", selectedName);
+
+  const input = document.getElementById("search-box");
+  if (input) input.value = item.label;
+  clearGeoNemoSearchResults();
+
+  const bbox = getGeoNemoSearchBBox(item.feature);
+  if (bbox) {
+    console.log("[GeoNEMO Search] bbox usado:", bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat);
+    const bounds = L.latLngBounds(
+      [bbox.minLat, bbox.minLon],
+      [bbox.maxLat, bbox.maxLon]
+    );
+
+    map.fitBounds(bounds, {
+      padding: [40, 40],
+      maxZoom: 13
+    });
+    console.log("[GeoNEMO Search] fitBounds aplicado al área protegida");
+  } else {
+    const point = getGeoNemoSearchPoint(item.feature);
+    console.warn("[GeoNEMO Search] bbox inválido, usando punto central", selectedName);
+    if (point) map.setView([point.lat, point.lon], 12);
+  }
+
+  const point = getGeoNemoSearchPoint(item.feature);
+  if (point) {
+    if (geoNemoSearchMarker) {
+      geoNemoSearchMarker.setLatLng([point.lat, point.lon]);
+    } else {
+      geoNemoSearchMarker = L.marker([point.lat, point.lon]).addTo(map);
+    }
+  }
+}
+
+async function initGeoNemoSearch() {
+  const input = document.getElementById("search-box");
+  const container = document.getElementById("search-results");
+  if (!input || !container) return;
+
+  container.hidden = true;
+  await loadGeoNemoSearchIndex();
+
+  input.addEventListener("input", () => renderGeoNemoSearchResults(searchGeoNemoAreas(input.value)));
+  input.addEventListener("keydown", (event) => {
+    if (!geoNemoSearchResults.length) return;
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      geoNemoSearchActiveIndex = Math.min(geoNemoSearchActiveIndex + 1, geoNemoSearchResults.length - 1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      geoNemoSearchActiveIndex = Math.max(geoNemoSearchActiveIndex - 1, 0);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      selectGeoNemoSearchResult(Math.max(geoNemoSearchActiveIndex, 0));
+      return;
+    } else if (event.key === "Escape") {
+      clearGeoNemoSearchResults();
+      return;
+    } else {
+      return;
+    }
+
+    container.querySelectorAll(".search-result-item").forEach((button, index) => {
+      button.classList.toggle("is-active", index === geoNemoSearchActiveIndex);
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest("#search-box-wrapper")) clearGeoNemoSearchResults();
+  });
+}
+
+async function iniciarMapa() {
+  const siteConfig = { ...(await GeoXViewport.loadSiteViewportConfig(SITE_ID)), ...SITE_CONFIG };
+  window.GeoXLocationZoom = Number(siteConfig.locationViewport?.fallbackZoom ?? siteConfig.locationViewport?.zoom ?? siteConfig.defaultViewport?.fallbackZoom ?? siteConfig.defaultViewport?.zoom ?? 11);
+
+  geoQueryRestoreState = null;
+  map = L.map("map", {
+    zoomSnap: siteConfig?.zoomLimits?.snap ?? 0.25,
+    zoomDelta: siteConfig?.zoomLimits?.snap ?? 0.25
+  });
+  window.geoxMap = map;
+
+  osmLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap"
+  });
+
+  satLayer = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 19,
+    attribution: "Tiles © Esri"
+  });
+
+  window.geoxSiteConfig = siteConfig;
+  initGeoNEMOSummary(map);
+  initGeoNemoPanelLayers(map);
+  map.on("click", captureSelectedPoint);
+  map.on("moveend zoomend resize", () => applyGeoNemoLabelVisibility());
+
+  L.control.scale({
+    imperial: false
+  }).addTo(map);
+  installGeoQueryViewportRestoreHandlers();
+}
+
+async function initGeoNEMOSummary(mapInstance) {
+  summaryConfig = await loadSummaryConfig();
+
+  if (!summaryConfig || summaryConfig.activo !== true) {
+    console.warn("GeoNEMO summary no activo o no disponible");
+    return;
+  }
+
+  await loadSummaryLayers(summaryConfig);
+
+  updateGeoNEMOSummary(mapInstance);
+
+  setTimeout(() => updateGeoNEMOSummary(mapInstance), 400);
+  setTimeout(() => updateGeoNEMOSummary(mapInstance), 1000);
+
+  mapInstance.on("moveend zoomend", () => {
+    updateGeoNEMOSummary(mapInstance);
+  });
+}
+
+async function loadSummaryConfig() {
+  const configPaths = [
+    "./parametros/summary_config.json",
+    "./capas_summary/summary_config.json"
+  ];
+
+  for (const configPath of configPaths) {
+    try {
+      const configUrl = new URL(configPath, window.location.href).toString();
+      const response = await fetch(configUrl, {
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        throw new Error(`No se pudo cargar ${configPath}`);
+      }
+
+      const config = await response.json();
+      console.log("GeoNEMO summary config loaded", configUrl);
+      return config;
+    } catch (error) {
+      console.warn("GeoNEMO: error cargando summary_config.json", configPath, error);
+    }
+  }
+
+  return null;
+}
+
+async function loadSummaryLayers(config) {
+  summaryFeaturesByLayer = {};
+
+  for (const capa of config.capas || []) {
+    try {
+      const layerUrl = new URL(capa.archivo, window.location.href).toString();
+
+      const response = await fetch(layerUrl, {
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        throw new Error(`No se pudo cargar ${capa.archivo}`);
+      }
+
+      const geojson = await response.json();
+      const features = Array.isArray(geojson.features) ? geojson.features : [];
+
+      summaryFeaturesByLayer[capa.id] = features;
+
+      console.log(
+        "GeoNEMO summary layer loaded:",
+        capa.id,
+        features.length,
+        layerUrl
+      );
+    } catch (error) {
+      console.warn("GeoNEMO summary layer error:", capa.id, error);
+      summaryFeaturesByLayer[capa.id] = [];
+    }
+  }
+}
+
+function getFeatureLatLon(feature) {
+  if (
+    feature &&
+    feature.geometry &&
+    feature.geometry.type === "Point" &&
+    Array.isArray(feature.geometry.coordinates)
+  ) {
+    const lon = Number(feature.geometry.coordinates[0]);
+    const lat = Number(feature.geometry.coordinates[1]);
+
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      return { lat, lon };
+    }
+  }
+
+  const props = feature.properties || {};
+  const lat = Number(props.lat);
+  const lon = Number(props.lon);
+
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    return { lat, lon };
+  }
+
+  const bounds = getFeatureCoordinateBounds(feature);
+  if (bounds) {
+    return {
+      lat: (bounds.minLat + bounds.maxLat) / 2,
+      lon: (bounds.minLon + bounds.maxLon) / 2
+    };
+  }
+
+  return null;
+}
+
+function getFeatureCoordinateBounds(feature) {
+  const coordinates = feature && feature.geometry && feature.geometry.coordinates;
+  if (!Array.isArray(coordinates)) return null;
+
+  const bounds = {
+    minLat: Number.POSITIVE_INFINITY,
+    maxLat: Number.NEGATIVE_INFINITY,
+    minLon: Number.POSITIVE_INFINITY,
+    maxLon: Number.NEGATIVE_INFINITY
+  };
+
+  const visit = (coords) => {
+    if (!Array.isArray(coords)) return;
+    if (coords.length >= 2 && typeof coords[0] === "number" && typeof coords[1] === "number") {
+      const lon = Number(coords[0]);
+      const lat = Number(coords[1]);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        bounds.minLat = Math.min(bounds.minLat, lat);
+        bounds.maxLat = Math.max(bounds.maxLat, lat);
+        bounds.minLon = Math.min(bounds.minLon, lon);
+        bounds.maxLon = Math.max(bounds.maxLon, lon);
+      }
+      return;
+    }
+    coords.forEach(visit);
+  };
+
+  visit(coordinates);
+
+  return [bounds.minLat, bounds.maxLat, bounds.minLon, bounds.maxLon].every(Number.isFinite)
+    ? bounds
+    : null;
+}
+
+function getSummaryFeaturesInViewport(mapInstance, layerIds) {
+  const bounds = mapInstance.getBounds();
+  const result = [];
+
+  (layerIds || []).forEach((layerId) => {
+    const features = summaryFeaturesByLayer[layerId] || [];
+
+    features.forEach((feature) => {
+      const point = getFeatureLatLon(feature);
+      if (!point) return;
+
+      if (bounds.contains(L.latLng(point.lat, point.lon))) {
+        result.push(feature);
+      }
+    });
+  });
+
+  return result;
+}
+
+const SUMMARY_SUM_FALLBACK_FIELDS = [
+  "SUPERFICIE_HA",
+  "superficie_ha",
+  "AREA_HA",
+  "area_ha",
+  "SUPERFICIE",
+  "superficie"
+];
+
+function parseSummaryNumber(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (value === null || value === undefined) return 0;
+
+  const raw = String(value).trim();
+  if (!raw) return 0;
+
+  const normalized = raw
+    .replace(/\s/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatSummaryNumber(value, indicador = {}) {
+  const decimals = Number.isInteger(indicador.decimales)
+    ? indicador.decimales
+    : 0;
+
+  const formatted = Number(value).toLocaleString("es-CL", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
+
+  const prefijo = indicador.prefijo ? `${indicador.prefijo} ` : "";
+  const sufijo = indicador.sufijo ? ` ${indicador.sufijo}` : "";
+
+  return `${prefijo}${formatted}${sufijo}`;
+}
+
+function getPropInsensitive(props, fieldName) {
+  if (!props || !fieldName) return undefined;
+
+  if (Object.prototype.hasOwnProperty.call(props, fieldName)) {
+    return props[fieldName];
+  }
+
+  const target = String(fieldName).toLowerCase();
+  const key = Object.keys(props).find(
+    (propName) => String(propName).toLowerCase() === target
+  );
+
+  return key ? props[key] : undefined;
+}
+
+function getSummaryCountKey(feature, indicador = {}) {
+  const props = feature && feature.properties ? feature.properties : {};
+  const candidateFields = [
+    indicador.campo,
+    "ID_CATASTR",
+    "NOMBRE_TOT",
+    "NOMBRE_UNI",
+    "SUMMARY_ID",
+    "id_catastro",
+    "nombre"
+  ].filter(Boolean);
+
+  for (const field of candidateFields) {
+    const value = getPropInsensitive(props, field);
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      return String(value).trim().toLowerCase();
+    }
+  }
+
+  return null;
+}
+
+function countSummaryFeatures(visibleFeatures, indicador) {
+  if (!Array.isArray(visibleFeatures)) return 0;
+
+  if (!indicador.distinct) {
+    return visibleFeatures.length;
+  }
+
+  const values = new Set();
+  let featuresWithoutKey = 0;
+
+  visibleFeatures.forEach((feature) => {
+    const key = getSummaryCountKey(feature, indicador);
+    if (key) {
+      values.add(key);
+    } else {
+      featuresWithoutKey += 1;
+    }
+  });
+
+  return values.size + featuresWithoutKey;
+}
+
+function hasSummaryField(feature, fieldName) {
+  if (!fieldName) return false;
+  const props = feature && feature.properties ? feature.properties : {};
+  return getPropInsensitive(props, fieldName) !== undefined;
+}
+
+function sumSummaryField(features, fieldName) {
+  return features.reduce((acc, feature) => {
+    const props = feature.properties || {};
+    return acc + parseSummaryNumber(getPropInsensitive(props, fieldName));
+  }, 0);
+}
+
+function getSummaryDistinctKey(feature, indicador = {}) {
+  const props = feature && feature.properties ? feature.properties : {};
+  const candidateFields = [
+    indicador.campo_distinct,
+    "ID_CATASTR",
+    "NOMBRE_TOT",
+    "SUMMARY_ID",
+    "nombre"
+  ].filter(Boolean);
+
+  for (const field of candidateFields) {
+    const value = getPropInsensitive(props, field);
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      return String(value).trim().toLowerCase();
+    }
+  }
+
+  return null;
+}
+
+function getDistinctSummaryFeatures(features, indicador = {}) {
+  if (!indicador.distinct && !indicador.distinctSum) return features;
+
+  const seen = new Set();
+  const unique = [];
+
+  features.forEach((feature) => {
+    const key = getSummaryDistinctKey(feature, indicador);
+    if (!key) {
+      unique.push(feature);
+      return;
+    }
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(feature);
+  });
+
+  return unique;
+}
+
+function getSummarySumFields(indicador) {
+  const fields = [];
+
+  if (indicador.campo) {
+    fields.push(indicador.campo);
+  }
+
+  SUMMARY_SUM_FALLBACK_FIELDS.forEach((fieldName) => {
+    if (!fields.includes(fieldName)) {
+      fields.push(fieldName);
+    }
+  });
+
+  return fields;
+}
+
+function calculateSummaryIndicator(indicador, features) {
+  const operacion = indicador.operacion;
+
+  if (operacion === "count") {
+    const resultado = countSummaryFeatures(features, indicador);
+
+    console.log("[GeoNEMO summary count]", indicador.id, {
+      totalFeaturesVisibles: features.length,
+      campo: indicador.campo,
+      distinct: indicador.distinct,
+      resultado
+    });
+
+    return {
+      campo: indicador.campo,
+      rawValue: resultado,
+      value: formatSummaryNumber(resultado, indicador)
+    };
+  }
+
+  if (operacion === "sum") {
+    const sumFeatures = getDistinctSummaryFeatures(features, indicador);
+    let selectedField = indicador.campo;
+    let total = selectedField ? sumSummaryField(sumFeatures, selectedField) : 0;
+    const configuredFieldExists = selectedField
+      ? sumFeatures.some((feature) => hasSummaryField(feature, selectedField))
+      : false;
+
+    if (!configuredFieldExists || total === 0) {
+      const fallbackField = getSummarySumFields(indicador).find((fieldName) => {
+        if (fieldName === selectedField) return false;
+        if (!sumFeatures.some((feature) => hasSummaryField(feature, fieldName))) return false;
+        return sumSummaryField(sumFeatures, fieldName) !== 0;
+      });
+
+      if (fallbackField) {
+        selectedField = fallbackField;
+        total = sumSummaryField(sumFeatures, fallbackField);
+      }
+    }
+
+    return {
+      campo: selectedField,
+      rawValue: total,
+      value: formatSummaryNumber(total, indicador)
+    };
+  }
+
+  return {
+    campo: indicador.campo,
+    rawValue: null,
+    value: "—"
+  };
+}
+
+function updateGeoNEMOSummary(mapInstance) {
+  if (!summaryConfig || !Array.isArray(summaryConfig.indicadores)) return;
+
+  summaryConfig.indicadores.forEach((indicador) => {
+    const layerIds = indicador.capas || [];
+    const featuresInViewport = getSummaryFeaturesInViewport(mapInstance, layerIds);
+    const result = calculateSummaryIndicator(indicador, featuresInViewport);
+    const value = result && typeof result === "object" && "value" in result
+      ? result.value
+      : result;
+    const resultado = result && typeof result === "object" && "rawValue" in result
+      ? result.rawValue
+      : result;
+    const campo = result && typeof result === "object" && "campo" in result
+      ? result.campo
+      : indicador.campo;
+
+    console.log("[GeoNEMO summary]", indicador.id, {
+      operacion: indicador.operacion,
+      campo,
+      totalFeaturesVisibles: featuresInViewport.length,
+      resultado
+    });
+
+    updateSummaryKpiDom(indicador.id, value, indicador.label);
+  });
+}
+
+function updateSummaryKpiDom(indicatorId, value, label) {
+  const card = document.querySelector(`[data-summary-id="${indicatorId}"]`);
+
+  if (!card) {
+    console.warn("GeoNEMO KPI no encontrado:", indicatorId);
+    return;
+  }
+
+  const valueEl =
+    card.querySelector(".kpi-value") ||
+    card.querySelector(".summary-value");
+
+  const labelEl =
+    card.querySelector(".kpi-label") ||
+    card.querySelector(".summary-label");
+
+  if (valueEl) valueEl.textContent = value;
+  if (labelEl && label) labelEl.textContent = label;
+}
+
+function getGeoNemoBasemapColor() {
+  return currentBasemap === "sat" ? NEMO_SAT_COLOR : NEMO_OSM_COLOR;
+}
+
+function getGeoNemoLayerStyle(config = {}) {
+  const color = getGeoNemoBasemapColor();
+
+  return {
+    ...(config.style || {}),
+    color,
+    fillColor: color,
+    weight: 3,
+    opacity: 1,
+    fillOpacity: 0.06
+  };
+}
+
+function syncGeoNemoBasemapClass() {
+  const target = document.getElementById("map-container") || document.body;
+  if (!target) return;
+
+  target.classList.toggle("geonemo-basemap-osm", currentBasemap !== "sat");
+  target.classList.toggle("geonemo-basemap-sat", currentBasemap === "sat");
+}
+
+function updateGeoNemoPanelLayerStyles() {
+  Object.values(nemoPanelLayers).forEach((entry) => {
+    if (!entry || !entry.geometryGroup) return;
+    entry.geometryGroup.eachLayer((layer) => {
+      if (typeof layer.setStyle === "function") {
+        layer.setStyle(getGeoNemoLayerStyle(entry.config));
+      }
+    });
+  });
+}
+
+function createGeoNemoPanes(mapInstance) {
+  if (!mapInstance.getPane("nemo-panel-geometries")) {
+    mapInstance.createPane("nemo-panel-geometries");
+    mapInstance.getPane("nemo-panel-geometries").style.zIndex = 430;
+  }
+
+  if (!mapInstance.getPane("nemo-panel-labels")) {
+    mapInstance.createPane("nemo-panel-labels");
+    mapInstance.getPane("nemo-panel-labels").style.zIndex = 650;
+    mapInstance.getPane("nemo-panel-labels").style.pointerEvents = "none";
+  }
+}
+
+function getGeoNemoLabelText(feature, fields) {
+  const props = feature && feature.properties ? feature.properties : {};
+
+  for (const field of fields || []) {
+    const value = getPropInsensitive(props, field);
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      return String(value).trim();
+    }
+  }
+
   return "";
 }
 
-function buildSearchEntry({ group, fileUrl, feature, bbox }) {
+function getGeoNemoFeatureLabelKey(feature, labelText, layerId) {
+  const config = NEMO_PANEL_LAYER_CONFIG.find((layerConfig) => layerConfig.id === layerId) || {};
+  const props = feature && feature.properties ? feature.properties : {};
+  const candidateFields = [
+    ...(config.labelGroupFields || []),
+    "SUMMARY_ID",
+    "Id",
+    "ID"
+  ];
+  const id = candidateFields
+    .map((field) => getPropInsensitive(props, field))
+    .find((value) => value !== null && value !== undefined && String(value).trim() !== "") ||
+    labelText;
+
+  return `${layerId}:${String(id).trim().toLowerCase()}`;
+}
+
+function getGeoNemoLayerBounds(layer) {
+  if (!layer || typeof layer.getBounds !== "function") return null;
+  const bounds = layer.getBounds();
+  return bounds && bounds.isValid() ? bounds : null;
+}
+
+function collectGeoNemoLabelRecord(recordsByKey, feature, layer, config) {
+  const labelText = getGeoNemoLabelText(feature, config.labelFields);
+  if (!labelText) return;
+
+  const labelKey = getGeoNemoFeatureLabelKey(feature, labelText, config.id);
+  if (!labelKey) return;
+
+  const bounds = getGeoNemoLayerBounds(layer);
+  if (!bounds) return;
+
+  const current = recordsByKey.get(labelKey);
+  if (current) {
+    current.bounds.extend(bounds);
+    current.fragmentCount += 1;
+    return;
+  }
+
+  recordsByKey.set(labelKey, {
+    key: labelKey,
+    layerId: config.id,
+    labelText,
+    bounds: L.latLngBounds(bounds.getSouthWest(), bounds.getNorthEast()),
+    fragmentCount: 1
+  });
+}
+
+function getGeoNemoViewportAnchor(record, viewport) {
+  const south = Math.max(record.bounds.getSouth(), viewport.getSouth());
+  const north = Math.min(record.bounds.getNorth(), viewport.getNorth());
+  const west = Math.max(record.bounds.getWest(), viewport.getWest());
+  const east = Math.min(record.bounds.getEast(), viewport.getEast());
+
+  if (south <= north && west <= east) {
+    return L.latLngBounds([south, west], [north, east]).getCenter();
+  }
+
+  return record.bounds.getCenter();
+}
+
+function getGeoNemoVisibleLabelCandidates(entry) {
+  if (!map || !entry?.labelRecordsByKey) return [];
+  const viewport = map.getBounds();
+  const rawRecords = Array.from(entry.labelRecordsByKey.values());
+  const visibleRecords = rawRecords.filter((record) => record?.bounds?.isValid?.() && viewport.intersects(record.bounds));
+
+  const debugName = entry.config.id === "snaspe" ? "SNASPE" : entry.config.id === "ramsar" ? "Ramsar" : (entry.config.visibleName || entry.config.id);
+  console.log(`[GeoNEMO Labels] ${debugName} candidatos visibles: ${visibleRecords.length}`);
+  console.log(`[GeoNEMO Labels] ${debugName} únicos: ${visibleRecords.length}`);
+
+  return visibleRecords.map((record) => ({
+    ...record,
+    latlng: getGeoNemoViewportAnchor(record, viewport),
+    textKey: normalizeGeoNemoSearchText(record.labelText)
+  }));
+}
+
+function getGeoNemoLabelRect(candidate) {
+  const point = map.latLngToContainerPoint(candidate.latlng);
+  const fontPx = labelCapacityConfig.label_font_height_mm * 3.7795;
+  const width = Math.min(220, Math.max(48, candidate.labelText.length * fontPx * 0.62 + 18));
+  const height = Math.max(22, fontPx * 1.15 + 8);
+  return { left: point.x - width / 2, right: point.x + width / 2, top: point.y - height / 2, bottom: point.y + height / 2 };
+}
+
+function doGeoNemoLabelRectsCollide(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function rebuildGeoNemoControlledLabels() {
+  if (!map) return;
+  const entries = Object.values(nemoPanelLayers).filter((entry) => entry.labelsVisible);
+  const size = map.getSize();
+  const cm2PerCell = ((size.x / 96) * 2.54 / 3) * ((size.y / 96) * 2.54 / 3);
+  const allSelected = [];
+
+  entries.forEach((entry) => entry.labelGroup.clearLayers());
+
+  const candidates = entries.flatMap(getGeoNemoVisibleLabelCandidates)
+    .filter((candidate) => candidate.labelText && map.getBounds().contains(candidate.latlng));
+
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      const cellIndex = row * 3 + col + 1;
+      const minX = col * size.x / 3;
+      const maxX = (col + 1) * size.x / 3;
+      const minY = row * size.y / 3;
+      const maxY = (row + 1) * size.y / 3;
+      const center = L.point((minX + maxX) / 2, (minY + maxY) / 2);
+      const cellCandidates = candidates.filter((candidate) => {
+        const point = map.latLngToContainerPoint(candidate.latlng);
+        return point.x >= minX && point.x < maxX && point.y >= minY && point.y < maxY;
+      });
+      const maxLabelsCell = cellCandidates.length ? Math.max(1, Math.floor(cm2PerCell * labelCapacityConfig.labels_per_cm2)) : 0;
+      const seenText = new Set();
+      const selected = cellCandidates
+        .map((candidate) => ({
+          ...candidate,
+          distanceToCellCenter: map.latLngToContainerPoint(candidate.latlng).distanceTo(center)
+        }))
+        .sort((a, b) => a.distanceToCellCenter - b.distanceToCellCenter || a.key.localeCompare(b.key))
+        .filter((candidate) => {
+          if (seenText.has(candidate.textKey)) return false;
+          seenText.add(candidate.textKey);
+          return true;
+        })
+        .slice(0, maxLabelsCell);
+
+      allSelected.push(...selected);
+      console.log(`[GeoNEMO Labels] celda ${cellIndex} | candidatos: ${cellCandidates.length} | max: ${maxLabelsCell} | dibujadas: ${selected.length}`);
+    }
+  }
+
+  const finalLabels = [];
+  const finalTextKeys = new Set();
+  allSelected.forEach((candidate) => {
+    if (finalTextKeys.has(candidate.textKey)) return;
+    const rect = getGeoNemoLabelRect(candidate);
+    if (finalLabels.some((accepted) => doGeoNemoLabelRectsCollide(rect, accepted.rect))) return;
+    finalTextKeys.add(candidate.textKey);
+    finalLabels.push({ ...candidate, rect });
+  });
+
+  finalLabels.forEach((candidate) => {
+    const entry = nemoPanelLayers[candidate.layerId];
+    const marker = createGeoNemoLabelMarkerAtLatLng(candidate.latlng, candidate.labelText);
+    if (entry && marker) entry.labelGroup.addLayer(marker);
+  });
+  console.log(`[GeoNEMO Labels] total etiquetas finales: ${finalLabels.length}`);
+}
+
+function captureGeoNemoFeatureContext(layer, feature, config) {
+  if (!layer || typeof layer.on !== "function") return;
   const props = feature?.properties || {};
-  const geom = feature?.geometry || {};
-  if (!geom?.type) return null;
-
-  const GROUP_DISPLAY_FIELD = {
-    SNASPE: "NOMBRE_TOT"
-  };
-
-  const preferredNameKeys = [
-    "nombre",
-    "name",
-    "label",
-    "sitio",
-    "denominacion",
-    "nombre_oficial",
-    "nom_oficial",
-    "nom_sitio",
-    "designacion",
-    "designación",
-    "area_name",
-    "nombre_area",
-    "NOMBRE",
-    "NAME",
-    "LABEL",
-    "SITIO",
-    "DENOMINACION",
-    "NOMBRE_OFICIAL",
-    "NOM_OFICIAL",
-    "NOM_SITIO",
-    "DESIGNACION",
-    "AREA_NAME",
-    "NOMBRE_AREA"
-  ];
-
-  const preferredCategoryKeys = [
-    "categoria",
-    "tipo",
-    "subtipo",
-    "figura",
-    "clase",
-    "CATEGORIA",
-    "TIPO",
-    "SUBTIPO",
-    "FIGURA",
-    "CLASE",
-    "Categoria",
-    "Tipo",
-    "Subtipo",
-    "Figura",
-    "Clase"
-  ];
-
-  const preferredDescriptionKeys = [
-    "descripcion",
-    "detalle",
-    "observacion",
-    "comentario",
-    "DESCRIPCION",
-    "DETALLE",
-    "OBSERVACION",
-    "COMENTARIO",
-    "Descripcion",
-    "Detalle",
-    "Observacion",
-    "Comentario"
-  ];
-
-  // -----------------------------
-  // displayName: regla por grupo + heurística
-  // -----------------------------
-  let displayName = "";
-
-  const preferredField = GROUP_DISPLAY_FIELD[group?.group_id];
-  if (preferredField && props?.[preferredField] != null) {
-    displayName = String(props[preferredField]).trim();
-  }
-
-  if (!displayName) {
-    displayName = firstNonEmpty(props, preferredNameKeys);
-  }
-
-  if (!displayName) {
-    for (const [key, value] of Object.entries(props)) {
-      if (value == null) continue;
-      const v = String(value).trim();
-      if (!v) continue;
-
-      const k = normalizeSearchText(key);
-      if (
-        k.includes("nombre") ||
-        k.includes("name") ||
-        k.includes("sitio") ||
-        k.includes("denomin") ||
-        k.includes("design") ||
-        k.includes("area")
-      ) {
-        displayName = v;
-        break;
-      }
-    }
-  }
-
-  if (!displayName) {
-    displayName = group?.group_name || group?.group_id || "Sin nombre";
-  }
-
-  // -----------------------------
-  // category
-  // -----------------------------
-  let category = firstNonEmpty(props, preferredCategoryKeys);
-
-  if (!category) {
-    if (group?.group_id === "SNASPE") category = "SNASPE";
-    else category = group?.group_name || group?.group_id || "Sin categoría";
-  }
-
-  // -----------------------------
-  // description
-  // -----------------------------
-  const description = firstNonEmpty(props, preferredDescriptionKeys);
-
-  // -----------------------------
-  // searchText: TODOS los campos útiles
-  // -----------------------------
-  const allTexts = [];
-
-  for (const [key, value] of Object.entries(props)) {
-    if (value == null) continue;
-
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      const t = String(value).trim();
-      if (t) allTexts.push(t);
-    }
-  }
-
-  allTexts.push(
-    displayName,
-    category,
-    description || "",
-    group?.group_name || "",
-    group?.group_id || ""
-  );
-
-  return {
-    displayName,
-    category,
-    description,
-    groupName: group?.group_name || group?.group_id || "",
-    groupId: group?.group_id || "",
-    fileUrl,
-    geometryType: geom.type,
-    bbox: Array.isArray(bbox) ? bbox : null,
-    feature,
-    searchText: normalizeSearchText(allTexts.join(" · "))
-  };
+  layer.on("click", (event) => captureSelectedPoint(event, {
+    site: SITE_ID,
+    layer_id: config?.id || null,
+    feature_id: props.id || props.fid || props._src_fid || feature?.id || null,
+    feature_name: getGeoNemoLabelText(feature, config?.labelFields) || config?.visibleName || "",
+    source_layer: config?.file || config?.id || null
+  }));
 }
 
-/* ===========================
-   Carga MASTER grupos.json
-=========================== */
-async function loadGroupsMaster(url){
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`No se pudo cargar ${url} (HTTP ${res.status})`);
-  const data = await res.json();
 
-  const groups = Array.isArray(data?.groups) ? data.groups : [];
-  const out = [];
-
-  for (const g of groups){
-    const id = String(g.id || g.group_id || "").trim();
-    if (!id) continue;
-
-    const groupName = String(g.label || g.group || g.name || id).trim();
-
-    const filesRaw = Array.isArray(g.files) ? g.files : [];
-    const files = filesRaw
-      .map(f => resolveGroupFileUrl(url, f))
-      .filter(u => /\.geojson$/i.test(u));
-
-    out.push({
-      group_id: id,
-      group_name: groupName,
-      enabled: (g.enabled !== false),
-      files
-    });
-  }
-
-  return out;
+function getSnaspeRasterAttributes(item) {
+  return item && typeof item === "object" && item.atributos && typeof item.atributos === "object"
+    ? item.atributos
+    : {};
 }
 
-/* ===========================
-   Load GeoJSON por ARCHIVO + index bbox/area
-=========================== */
-async function ensureFileLoaded(fileUrl){
-  const st = fileState.get(fileUrl) || { loaded:false, featuresIndex:[], rawFeatures:[] };
-  if (st.loaded) return st;
-
-  if (!assertTurfReady()) return st;
-
-  const res = await fetch(fileUrl, { cache:"no-store" });
-  if (!res.ok) throw new Error(`No se pudo cargar ${fileUrl} (HTTP ${res.status})`);
-
-  const gj = await res.json();
-  const feats = gj.features || [];
-
-  const idx = [];
-  const rawFeatures = [];
-  for (const f of feats){
-    if (!f?.geometry?.type) continue;
-    try{
-      const bb = turf.bbox(f);
-      rawFeatures.push({ feature:f, bbox:bb });
-
-      const t = f.geometry.type;
-      if (t === "Polygon" || t === "MultiPolygon"){
-        let areaM2 = NaN;
-        try{ areaM2 = turf.area(f); } catch(_) {}
-        idx.push({ feature:f, bbox:bb, areaM2 });
-      }
-    } catch(_){}
-  }
-
-  st.loaded = true;
-  st.featuresIndex = idx;
-  st.rawFeatures = rawFeatures;
-  fileState.set(fileUrl, st);
-  searchState.dirty = true;
-
-  return st;
+function getSnaspeRasterLabelText(attributes) {
+  const label = getPropInsensitive(attributes, "NOMBRE_TOT") || getPropInsensitive(attributes, "NOMBRE_UNI") || getPropInsensitive(attributes, "nombre") || getPropInsensitive(attributes, "Nombre") || getPropInsensitive(attributes, "NOMBRE");
+  return label === null || label === undefined ? "" : String(label).trim();
 }
 
-/* ===========================
-   Resumen por grupo (BBOX) -> Tabla
-=========================== */
-const elGroupBody = document.getElementById("groupSummaryBody");
-const elGroupTotN = document.getElementById("groupSummaryTotalN");
-const elGroupTotA = document.getElementById("groupSummaryTotalArea");
+function getSnaspeRasterBounds(item) {
+  const candidate = item && (item.bounds || item.bbox || item.extent || item.latLngBounds || item.latlngBounds);
+  if (!Array.isArray(candidate)) return null;
 
-function renderGroupSummaryTable(rows){
-  if (!elGroupBody) return;
-
-  elGroupBody.innerHTML = "";
-
-  if (!rows || !rows.length){
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 3;
-    td.className = "muted";
-    td.textContent = "0 grupos con áreas en el BBOX visible";
-    tr.appendChild(td);
-    elGroupBody.appendChild(tr);
-
-    if (elGroupTotN) elGroupTotN.textContent = "0";
-    if (elGroupTotA) elGroupTotA.textContent = "0 ha";
-    return;
+  if (candidate.length === 2 && Array.isArray(candidate[0]) && Array.isArray(candidate[1])) {
+    return candidate;
   }
 
-  rows.sort((a,b) => (b.count - a.count) || (b.areaM2 - a.areaM2) || String(a.group).localeCompare(String(b.group)));
-
-  let sumN = 0;
-  let sumA = 0;
-
-  for (const r of rows){
-    sumN += r.count;
-    sumA += r.areaM2;
-
-    const tr = document.createElement("tr");
-
-    const tdG = document.createElement("td");
-    tdG.textContent = r.group;
-    tr.appendChild(tdG);
-
-    const tdN = document.createElement("td");
-    tdN.textContent = fmtInt(r.count);
-    tr.appendChild(tdN);
-
-    const tdA = document.createElement("td");
-    tdA.textContent = fmtArea(r.areaM2);
-    tr.appendChild(tdA);
-
-    elGroupBody.appendChild(tr);
+  if (candidate.length === 4) {
+    const [minX, minY, maxX, maxY] = candidate.map(Number);
+    if ([minX, minY, maxX, maxY].every(Number.isFinite)) return [[minY, minX], [maxY, maxX]];
   }
 
-  if (elGroupTotN) elGroupTotN.textContent = fmtInt(sumN);
-  if (elGroupTotA) elGroupTotA.textContent = fmtArea(sumA);
+  return null;
 }
 
-/* ===========================
-   Stats BBOX -> por grupo
-=========================== */
-let _statsRAF = false;
-function scheduleStatsUpdate(){
-  if (_statsRAF) return;
-  _statsRAF = true;
-  requestAnimationFrame(() => {
-    _statsRAF = false;
-    updateBboxStatsByGroup().catch(err => {
-      console.warn("[GeoNEMO] Error en updateBboxStatsByGroup:", err);
-      renderGroupSummaryTable([]);
-    });
-  });
+function getSnaspeRasterLabelLatLng(item) {
+  const candidate = item && (item.label_latlng || item.labelLatLng || item.centroide || item.centroid || item.center);
+  if (Array.isArray(candidate) && candidate.length >= 2) {
+    const lat = Number(candidate[0]);
+    const lng = Number(candidate[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+  }
+
+  const bounds = getSnaspeRasterBounds(item);
+  if (bounds) return L.latLngBounds(bounds).getCenter();
+  return null;
 }
 
-async function updateBboxStatsByGroup() {
-  if (!map) {
-    renderGroupSummaryTable([]);
-    return;
-  }
+function createGeoNemoLabelMarkerAtLatLng(latlng, labelText) {
+  if (!latlng || !labelText) return null;
 
-  if (!assertTurfReady()) {
-    renderGroupSummaryTable([]);
-    return;
-  }
-
-  const activeGroups = (GROUPS || []).filter((g) => g && g.enabled !== false);
-  if (!activeGroups.length) {
-    renderGroupSummaryTable([]);
-    return;
-  }
-
-  const b = map.getBounds();
-  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
-  const bboxPoly = turf.bboxPolygon(bbox);
-
-  const summaryRows = [];
-
-  let grandCount = 0;
-  let grandAreaM2 = 0;
-
-  for (const g of activeGroups) {
-    const files = Array.isArray(g.files) ? g.files : [];
-    if (!files.length) continue;
-
-    let groupCount = 0;
-    let groupAreaM2 = 0;
-
-    for (const fileUrl of files) {
-      let st;
-      try {
-        st = await ensureFileLoaded(fileUrl);
-      } catch (e) {
-        console.warn("[GeoNEMO] error loading:", fileUrl, e);
-        continue;
-      }
-
-      const idx = st.featuresIndex || [];
-      if (!idx.length) continue;
-
-      for (const it of idx) {
-        if (!bboxIntersects(it.bbox, bbox)) continue;
-
-        let touches = false;
-        try {
-          touches = turf.booleanIntersects(it.feature, bboxPoly);
-        } catch (_) {}
-        if (!touches) continue;
-
-        groupCount += 1;
-
-        try {
-          const inter = turf.intersect(it.feature, bboxPoly);
-          if (inter) groupAreaM2 += turf.area(inter);
-          else groupAreaM2 += Number.isFinite(it.areaM2) ? it.areaM2 : 0;
-        } catch (_) {
-          groupAreaM2 += Number.isFinite(it.areaM2) ? it.areaM2 : 0;
-        }
-      }
-    }
-
-    if (groupCount > 0) {
-      summaryRows.push({
-        group: g.group_name || g.group_id,
-        count: groupCount,
-        areaM2: groupAreaM2
-      });
-      grandCount += groupCount;
-      grandAreaM2 += groupAreaM2;
-    }
-  }
-
-  renderGroupSummaryTable(summaryRows);
-
-  const prev = loadOut() || {};
-  saveOut({
-    ...prev,
-    updated_at: nowIso(),
-    bbox: { west: bbox[0], south: bbox[1], east: bbox[2], north: bbox[3] },
-    stats: {
-      scope: "all_enabled_groups",
-      by_group: summaryRows.map(r => ({
-        group_name: r.group,
-        areas_bbox: r.count,
-        protected_area_m2: r.areaM2,
-        protected_area_fmt: fmtArea(r.areaM2)
-      })),
-      areas_bbox: grandCount,
-      protected_area_m2: grandAreaM2,
-      protected_area_fmt: fmtArea(grandAreaM2),
-    },
-  });
-}
-
-function rebuildSearchIndexFromMemory(){
-  const activeGroups = (GROUPS || []).filter((g) => g && g.enabled !== false);
-  if (!activeGroups.length) {
-    searchState.entries = [];
-    searchState.dirty = false;
-    return;
-  }
-
-  const groupByFile = new Map();
-  for (const g of activeGroups){
-    for (const fileUrl of (g.files || [])){
-      if (!groupByFile.has(fileUrl)) groupByFile.set(fileUrl, g);
-    }
-  }
-
-  const entries = [];
-  for (const [fileUrl, group] of groupByFile){
-    const st = fileState.get(fileUrl);
-    if (!st?.loaded) continue;
-    for (const it of (st.rawFeatures || [])){
-      const entry = buildSearchEntry({
-        group,
-        fileUrl,
-        feature: it.feature,
-        bbox: it.bbox
-      });
-      if (entry) entries.push(entry);
-    }
-  }
-
-  searchState.entries = entries;
-  searchState.dirty = false;
-}
-
-function clearSearchHighlight(){
-  if (searchState.highlightLayer && map) {
-    map.removeLayer(searchState.highlightLayer);
-  }
-  searchState.highlightLayer = null;
-}
-
-function highlightSearchFeature(feature){
-  if (!map || !feature) return;
-  clearSearchHighlight();
-
-  const layer = L.geoJSON(feature, {
-    style: {
-      color: "#16a34a",
-      weight: 4,
-      opacity: 0.95,
-      fillColor: "#bef264",
-      fillOpacity: 0.25
-    },
-    pointToLayer: (_, latlng) => L.circleMarker(latlng, {
-      radius: 9,
-      color: "#16a34a",
-      weight: 3,
-      fillColor: "#bef264",
-      fillOpacity: 0.45
+  return L.marker(latlng, {
+    interactive: false,
+    pane: "nemo-panel-labels",
+    icon: L.divIcon({
+      className: "geonemo-panel-label",
+      html: `<span>${escapeHtml(labelText)}</span>`,
+      iconSize: null
     })
-  }).addTo(map);
-
-  searchState.highlightLayer = layer;
-  setTimeout(() => {
-    if (searchState.highlightLayer === layer) {
-      clearSearchHighlight();
-    }
-  }, 2200);
-}
-
-function focusSearchResult(entry){
-  if (!map || !entry?.feature?.geometry?.type) return;
-
-  let bb = entry.bbox;
-  try {
-    if (!bb) bb = turf.bbox(entry.feature);
-  } catch (_) {
-    bb = null;
-  }
-  if (!bb) return;
-
-  const t = entry.feature.geometry.type;
-  if (t === "Point" || t === "MultiPoint"){
-    const lat = (bb[1] + bb[3]) / 2;
-    const lng = (bb[0] + bb[2]) / 2;
-    map.setView([lat, lng], Math.max(map.getZoom(), 12), { animate: true });
-  } else {
-    map.fitBounds([[bb[1], bb[0]], [bb[3], bb[2]]], {
-      padding: [30, 30],
-      maxZoom: 13,
-      animate: true
-    });
-  }
-
-  highlightSearchFeature(entry.feature);
-}
-
-function runInMemorySearch(rawQuery) {
-  const q = normalizeSearchText(rawQuery);
-  if (!q) return [];
-
-  if (searchState.dirty) rebuildSearchIndexFromMemory();
-  if (!searchState.entries.length) return [];
-
-  const queryVariants = new Set([q]);
-
-  // Variantes simples singular/plural
-  if (q.length > 3) {
-    if (q.endsWith("es")) queryVariants.add(q.slice(0, -2));
-    if (q.endsWith("s")) queryVariants.add(q.slice(0, -1));
-  }
-
-  const starts = [];
-  const wordMatches = [];
-  const contains = [];
-
-  for (const entry of searchState.entries) {
-    const txt = normalizeSearchText(entry.searchText || "");
-    if (!txt) continue;
-
-    const words = txt.split(/\s+/).filter(Boolean);
-
-    let matched = false;
-    let matchedAsStart = false;
-    let matchedAsWord = false;
-
-    for (const variant of queryVariants) {
-      if (!variant) continue;
-
-      if (txt.startsWith(variant)) {
-        matched = true;
-        matchedAsStart = true;
-        break;
-      }
-
-      if (words.some((w) => w.startsWith(variant) || w.includes(variant))) {
-        matched = true;
-        matchedAsWord = true;
-        continue;
-      }
-
-      if (txt.includes(variant)) {
-        matched = true;
-      }
-    }
-
-    if (!matched) continue;
-
-    if (matchedAsStart) starts.push(entry);
-    else if (matchedAsWord) wordMatches.push(entry);
-    else contains.push(entry);
-  }
-
-  const results = starts.concat(wordMatches, contains);
-
-// Deduplicación
-const seen = new Set();
-const unique = [];
-
-for (const r of results) {
-  const key = `${r.groupId}::${normalizeSearchText(r.displayName)}`;
-  if (seen.has(key)) continue;
-  seen.add(key);
-  unique.push(r);
-}
-
-return unique.slice(0, SEARCH_MAX_RESULTS);
-}
-
-function bindSearchUI(){
-  const input = document.getElementById("mapSearchInput");
-  const list = document.getElementById("mapSearchResults");
-  if (!input || !list) return;
-
-  const hideResults = () => {
-    list.classList.remove("show");
-    list.innerHTML = "";
-  };
-
-  const renderResults = (results) => {
-    list.innerHTML = "";
-    if (!results.length) {
-      const li = document.createElement("li");
-      li.innerHTML = `<button type="button" class="map-search-result-btn" disabled>
-        <span class="map-search-result-title">Sin coincidencias</span>
-        <span class="map-search-result-meta">Prueba con otro término</span>
-      </button>`;
-      list.appendChild(li);
-      list.classList.add("show");
-      return;
-    }
-
-    for (const r of results){
-      const li = document.createElement("li");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "map-search-result-btn";
-      const title = document.createElement("span");
-      title.className = "map-search-result-title";
-      title.textContent = r.displayName;
-      const meta = document.createElement("span");
-      meta.className = "map-search-result-meta";
-      meta.textContent = `${r.category} · ${r.groupName}`;
-      button.appendChild(title);
-      button.appendChild(meta);
-      button.addEventListener("click", () => {
-        focusSearchResult(r);
-        hideResults();
-        input.value = r.displayName;
-      });
-      li.appendChild(button);
-      list.appendChild(li);
-    }
-    list.classList.add("show");
-  };
-
-  input.addEventListener("input", () => {
-    const q = input.value || "";
-    if (!q.trim()) {
-      hideResults();
-      return;
-    }
-    renderResults(runInMemorySearch(q));
-  });
-
-  input.addEventListener("focus", () => {
-    if (input.value.trim()) renderResults(runInMemorySearch(input.value));
-  });
-
-  document.addEventListener("click", (ev) => {
-    const target = ev.target;
-    if (!target || (target !== input && !list.contains(target))) {
-      hideResults();
-    }
   });
 }
 
-/* ===========================
-   Distancia al perímetro (m)
-=========================== */
-function distToPerimeterM(feature, pt){
-  try{
-    const line = turf.polygonToLine(feature);
-    let d = turf.pointToLineDistance(pt, line, { units:"meters" });
-    if (!isFinite(d)) return Infinity;
-    return d;
-  } catch(e){
-    try{
-      const line = turf.polygonToLine(feature);
-      const km = turf.pointToLineDistance(pt, line, { units:"kilometers" });
-      return isFinite(km) ? km * 1000 : Infinity;
-    } catch(_){
-      return Infinity;
-    }
-  }
+function getFileExtension(filename) {
+  const match = String(filename || "").toLowerCase().match(/\.[^.?#/]+(?=$|[?#])/);
+  return match ? match[0] : "";
 }
 
-/* ===========================
-   Vinculación por GRUPO
-=========================== */
-async function linkOneGroupToPoint(group, pt, lon, lat, searchRadiusKm, searchBBox){
-  const files = group.files || [];
-  if (!files.length) {
-    return {
-      group_id: group.group_id,
-      group_name: group.group_name,
-      link_type: "none",
-      distance_m: null,
-      distance_border_m: null,
-      source_file: null,
-      feature: null
-    };
-  }
+function getSnaspeRasterColor() {
+  return currentBasemap === "sat" ? "rgba(255, 255, 0, 1)" : "rgba(0, 255, 0, 1)";
+}
 
-  for (const fileUrl of files){
-    const st = await ensureFileLoaded(fileUrl);
-    const idx = st.featuresIndex || [];
-    if (!idx.length) continue;
+function getSnaspeRasterNoDataValues(record) {
+  if (!record || !record.georaster) return [];
 
-    for (const it of idx){
-      if (searchBBox && !bboxIntersects(it.bbox, searchBBox)) continue;
-      if (!bboxContainsLonLat(it.bbox, lon, lat)) continue;
+  const candidates = [
+    record.georaster.noDataValue,
+    record.georaster.nodata,
+    record.georaster.noDataValues
+  ];
 
-      let inside = false;
-      try{ inside = turf.booleanPointInPolygon(pt, it.feature); } catch(_) {}
+  return candidates
+    .flatMap((candidate) => (Array.isArray(candidate) ? candidate : [candidate]))
+    .map((candidate) => Number(candidate))
+    .filter(Number.isFinite);
+}
 
-      if (inside){
-        const f = it.feature;
-        const dBorde = distToPerimeterM(f, pt);
+function getSnaspeRasterPixelColor(values, record) {
+  const pixelValues = Array.isArray(values) ? values : [values];
+  const noDataValues = getSnaspeRasterNoDataValues(record);
 
-        return {
-          group_id: group.group_id,
-          group_name: group.group_name,
-          link_type: "inside",
-          distance_m: 0,
-          distance_border_m: isFinite(dBorde) ? dBorde : null,
-          source_file: fileUrl,
-          feature: {
-            type: "Feature",
-            properties: f.properties || {},
-            geometry: f.geometry
-          }
-        };
-      }
-    }
-  }
+  const hasVisiblePerimeterPixel = pixelValues.some((pixelValue) => {
+    if (pixelValue === null || pixelValue === undefined) return false;
 
-  let bestD = Infinity;
-  let bestFeat = null;
-  let bestFile = null;
+    const numericValue = Number(pixelValue);
+    if (!Number.isFinite(numericValue)) return false;
+    if (numericValue === 0) return false;
+    if (noDataValues.includes(numericValue)) return false;
 
-  for (const fileUrl of files){
-    const st = await ensureFileLoaded(fileUrl);
-    const idx = st.featuresIndex || [];
-    if (!idx.length) continue;
+    return true;
+  });
 
-    for (const it of idx){
-      if (searchBBox && !bboxIntersects(it.bbox, searchBBox)) continue;
-      const d = distToPerimeterM(it.feature, pt);
-      if (isFinite(d) && d <= (searchRadiusKm * 1000) && d < bestD){
-        bestD = d;
-        bestFeat = it.feature;
-        bestFile = fileUrl;
-      }
-    }
-  }
+  return hasVisiblePerimeterPixel ? getSnaspeRasterColor() : null;
+}
 
-  if (!bestFeat){
-    return {
-      group_id: group.group_id,
-      group_name: group.group_name,
-      link_type: "none",
-      distance_m: null,
-      distance_border_m: null,
-      source_file: null,
-      feature: null
-    };
-  }
-
-  const dFinal = isFinite(bestD) ? bestD : null;
-
+function getSnaspeGeoRasterLayerOptions(record) {
   return {
-    group_id: group.group_id,
-    group_name: group.group_name,
-    link_type: "nearest_perimeter",
-    distance_m: dFinal,
-    distance_border_m: dFinal,
-    source_file: bestFile,
-    feature: {
-      type: "Feature",
-      properties: bestFeat.properties || {},
-      geometry: bestFeat.geometry
-    }
+    georaster: record.georaster,
+    pane: "nemo-panel-geometries",
+    opacity: SNASPE_RASTER_OPACITY,
+    resolution: 256,
+    pixelValuesToColorFn: (values) => getSnaspeRasterPixelColor(values, record)
   };
 }
 
-/* ===========================
-   Click: siempre abre mapaout.html
-=========================== */
-async function onMapClick(e){
-  if (!assertTurfReady()) return;
+function encodeSnaspeRasterPath(archivo) {
+  return String(archivo || "")
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
 
-  const lat = e.latlng.lat;
-  const lng = e.latlng.lng;
+function getSnaspeRasterUrl(archivo) {
+  return new URL(`${SNASPE_RASTER_FOLDER_URL}${encodeSnaspeRasterPath(archivo)}`, window.location.href).toString();
+}
 
-  trackEvent({
-    event: "geo_click_map",
-    lat,
-    lng,
-    site: TRACK_SITE
-  }, { dedupeKey: `geo_click_map:${lat.toFixed(6)}:${lng.toFixed(6)}` });
+function getSnaspeRasterLabelLatLngFromGeoraster(georaster) {
+  if (!georaster || !window.L) return null;
 
-  if (clickMarker) map.removeLayer(clickMarker);
-  clickMarker = L.circleMarker([lat, lng], {
-    radius: 7, weight: 2, opacity: 1, fillOpacity: 0.25
-  }).addTo(map);
+  const xmin = Number(georaster.xmin);
+  const xmax = Number(georaster.xmax);
+  const ymin = Number(georaster.ymin);
+  const ymax = Number(georaster.ymax);
+  if (![xmin, xmax, ymin, ymax].every(Number.isFinite)) return null;
 
-  const pt = turf.point([lng, lat]);
-  const searchRadiusKm = resolveSearchRadiusKm();
-  localStorage.setItem(SEARCH_RADIUS_STORAGE_KEY, String(searchRadiusKm));
-  const searchBBox = turf.bbox(turf.circle([lng, lat], searchRadiusKm, { units: "kilometers", steps: 24 }));
+  return L.latLngBounds([[ymin, xmin], [ymax, xmax]]).getCenter();
+}
 
-  const activeGroups = (GROUPS || []).filter(g => g.enabled !== false);
-  const results = [];
+function addSnaspeGeoRasterLayer(record, snaspeEntry) {
+  if (!record || !record.georaster || !snaspeEntry || !window.GeoRasterLayer) return null;
 
-  for (const g of activeGroups){
-    try{
-      const r = await linkOneGroupToPoint(g, pt, lng, lat, searchRadiusKm, searchBBox);
-      results.push(r);
-    } catch(err){
-      console.warn("Error vinculando grupo", g, err);
-      results.push({
-        group_id: g.group_id,
-        group_name: g.group_name,
-        link_type: "error",
-        distance_m: null,
-        distance_border_m: null,
-        source_file: null,
-        feature: null
-      });
-    }
+  const rasterLayer = new GeoRasterLayer(getSnaspeGeoRasterLayerOptions(record));
+  if (typeof rasterLayer.on === "function") {
+    rasterLayer.on("click", (event) => captureSelectedPoint(event, {
+      site: SITE_ID,
+      layer_id: "snaspe",
+      feature_id: record.archivo || null,
+      feature_name: getSnaspeRasterLabelText(record.attributes) || "",
+      source_layer: record.archivo || "snaspe_raster"
+    }));
   }
 
-  const insideCount = results.filter(x => x.link_type === "inside").length;
-  toast(insideCount ? `✅ Dentro en ${insideCount} grupo(s)` : "📍 Sin coincidencias en grupos activos", 1600);
+  record.layer = rasterLayer;
+  snaspeEntry.geometryGroup.addLayer(rasterLayer);
+  console.log("[GeoNEMO Raster] perímetro agregado al mapa", record.archivo);
+  return rasterLayer;
+}
 
-  const prev = loadOut() || {};
+function rebuildSnaspeRasterLayers() {
+  const snaspeEntry = nemoPanelLayers.snaspe;
+  if (!snaspeEntry || !Array.isArray(snaspeEntry.rasterRecords)) return;
 
-  const legacyLinks = results.map(r => ({
-    layer_id: r.group_id,
-    layer_name: r.group_name,
-    link_type: r.link_type,
-    distance_km: isFinite(r.distance_m) ? (r.distance_m / 1000) : null,
-    distance_m: r.distance_m ?? null,
-    distance_border_m: r.distance_border_m ?? null,
-    source_file: r.source_file ?? null,
-    feature: r.feature
+  snaspeEntry.rasterRecords.forEach((record) => {
+    if (!record || !record.georaster) return;
+    if (record.layer && snaspeEntry.geometryGroup.hasLayer(record.layer)) {
+      snaspeEntry.geometryGroup.removeLayer(record.layer);
+    }
+    addSnaspeGeoRasterLayer(record, snaspeEntry);
+  });
+}
+
+async function loadSnaspeGeoTiffRaster(record, snaspeEntry) {
+  console.log(`[GeoNEMO Raster] cargando perímetro raster: ${record.archivo}`);
+
+  try {
+    const response = await fetch(record.rasterUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const arrayBuffer = await response.arrayBuffer();
+    record.georaster = await parseGeoraster(arrayBuffer);
+    console.log("[GeoNEMO Raster] parse OK", record.archivo);
+
+    addSnaspeGeoRasterLayer(record, snaspeEntry);
+
+    const labelLatLng = getSnaspeRasterLabelLatLng(record.metadata) || getSnaspeRasterLabelLatLngFromGeoraster(record.georaster);
+    if (labelLatLng && record.labelText) {
+      const labelKey = getGeoNemoFeatureLabelKey({ properties: record.attributes }, record.labelText, "snaspe");
+      const bounds = L.latLngBounds(labelLatLng, labelLatLng);
+      const current = snaspeEntry.labelRecordsByKey.get(labelKey);
+      if (current) {
+        current.bounds.extend(bounds);
+        current.fragmentCount += 1;
+      } else {
+        snaspeEntry.labelRecordsByKey.set(labelKey, {
+          key: labelKey,
+          layerId: "snaspe",
+          labelText: record.labelText,
+          bounds,
+          fragmentCount: 1
+        });
+      }
+      rebuildGeoNemoControlledLabels();
+    }
+
+    return true;
+  } catch (error) {
+    console.warn(`[GeoNEMO Raster] error cargando archivo ${record.archivo}`, error);
+    return false;
+  }
+}
+
+async function loadSnaspeRasterFolder(mapInstance) {
+  const snaspeEntry = nemoPanelLayers.snaspe;
+  if (!mapInstance || !snaspeEntry) return;
+
+  if (typeof parseGeoraster !== "function" || !window.GeoRasterLayer) {
+    console.warn("[GeoNEMO Raster] error cargando archivo: dependencias georaster/georaster-layer-for-leaflet no disponibles.");
+    return;
+  }
+
+  let metadata;
+  try {
+    const metadataUrl = new URL(SNASPE_RASTER_METADATA_URL, window.location.href).toString();
+    const response = await fetch(metadataUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    metadata = await response.json();
+    console.log("[GeoNEMO Raster] metadata cargado");
+  } catch (error) {
+    console.warn("[GeoNEMO Raster] metadata.json no disponible; continúa SNASPE vectorial y Ramsar.", error);
+    return;
+  }
+
+  const entries = metadata && typeof metadata === "object" ? Object.entries(metadata) : [];
+  console.log(`[GeoNEMO Raster] total rasters declarados: ${entries.length}`);
+
+  const loadPromises = entries.map(([key, item]) => {
+    const archivo = String((item && item.archivo) || key || "").trim();
+    if (!archivo) return Promise.resolve(false);
+
+    const extension = getFileExtension(archivo);
+    if (!SNASPE_RASTER_GEOTIFF_EXTENSIONS.has(extension)) {
+      console.warn(`[GeoNEMO Raster] error cargando archivo ${archivo}: formato no GeoTIFF declarado en metadata.`);
+      return Promise.resolve(false);
+    }
+
+    const attributes = getSnaspeRasterAttributes(item);
+    const record = {
+      archivo,
+      rasterUrl: getSnaspeRasterUrl(archivo),
+      attributes,
+      labelText: getSnaspeRasterLabelText(attributes),
+      metadata: item,
+      georaster: null,
+      layer: null,
+      labelMarker: null
+    };
+    snaspeEntry.rasterRecords.push(record);
+    return loadSnaspeGeoTiffRaster(record, snaspeEntry);
+  });
+
+  const results = await Promise.all(loadPromises);
+  const visibleCount = results.filter(Boolean).length;
+  console.log(`[GeoNEMO Raster] total visibles: ${visibleCount}`);
+}
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function initGeoNemoPanelLayers(mapInstance) {
+  if (!mapInstance || !window.L) return;
+
+  createGeoNemoPanes(mapInstance);
+  nemoPanelLayers = {};
+
+  await Promise.all(NEMO_PANEL_LAYER_CONFIG.map((config) => loadGeoNemoPanelLayer(mapInstance, config)));
+  applyGeoNemoLabelVisibility();
+}
+
+async function loadGeoNemoPanelLayer(mapInstance, config) {
+  const geometryGroup = L.layerGroup([], { pane: "nemo-panel-geometries" }).addTo(mapInstance);
+  const labelGroup = L.layerGroup([], { pane: "nemo-panel-labels" });
+  const labelRecordsByKey = new Map();
+  nemoPanelLayers[config.id] = { config, geometryGroup, labelGroup, labelRecordsByKey, labelsVisible: false, rasterRecords: [] };
+
+  const archivos = Array.isArray(config.archivos) ? config.archivos : [config.archivo].filter(Boolean);
+
+  await Promise.all(archivos.map(async (archivo) => {
+    try {
+      const layerUrl = new URL(archivo, window.location.href).toString();
+      const response = await fetch(layerUrl, { cache: "no-store" });
+      if (!response.ok) throw new Error(`No se pudo cargar ${archivo}`);
+
+      const geojson = await response.json();
+      L.geoJSON(geojson, {
+        pane: "nemo-panel-geometries",
+        style: () => getGeoNemoLayerStyle(config),
+        pointToLayer: (feature, latlng) => L.circleMarker(latlng, getGeoNemoLayerStyle(config)),
+        onEachFeature: (feature, layer) => {
+          geometryGroup.addLayer(layer);
+          captureGeoNemoFeatureContext(layer, feature, config);
+          collectGeoNemoLabelRecord(labelRecordsByKey, feature, layer, config);
+        }
+      });
+
+      console.log("GeoNEMO panel layer loaded:", config.id, layerUrl);
+    } catch (error) {
+      console.warn("GeoNEMO panel layer error:", config.id, archivo, error);
+    }
   }));
 
-  saveOut({
-    ...prev,
-    created_at: prev.created_at || nowIso(),
-    updated_at: nowIso(),
-    click: { lat, lng },
-    search_radius_km: searchRadiusKm,
-    groups: results,
-    links: legacyLinks
+  rebuildGeoNemoControlledLabels();
+}
+
+function applyGeoNemoLabelVisibility(layerId = null, visible = null) {
+  Object.values(nemoPanelLayers).forEach((entry) => {
+    if (layerId && entry.config.id !== layerId) return;
+
+    const desiredVisibility = visible === null ? entry.labelsVisible : visible;
+    const shouldShow = desiredVisibility && map.getZoom() >= getLabelDensityMinZoom(entry.config.id);
+    entry.labelsVisible = desiredVisibility;
+
+    if (shouldShow && !map.hasLayer(entry.labelGroup)) {
+      rebuildGeoNemoControlledLabels();
+      entry.labelGroup.addTo(map);
+    }
+
+    if (!shouldShow && map.hasLayer(entry.labelGroup)) {
+      map.removeLayer(entry.labelGroup);
+    }
   });
 
-  const bounds = map.getBounds();
-  const bbox = [bounds.getNorth(), bounds.getEast(), bounds.getSouth(), bounds.getWest()].join(",");
-  openOut({ lat, lng, bbox });
+  rebuildGeoNemoControlledLabels();
+
+  const entries = Object.values(nemoPanelLayers);
+  nemoLabelsVisible = entries.length > 0 && entries.every((entry) => entry.labelsVisible);
+  syncGeoNemoLabelControls();
 }
 
-/* ===========================
-   Botones
-=========================== */
-function clearPoint(){
-  if (clickMarker) {
-    map.removeLayer(clickMarker);
-    clickMarker = null;
-  }
-  toast("🧹 Punto limpiado", 1200);
+function syncGeoNemoLabelControls() {
+  NEMO_PANEL_LAYER_CONFIG.forEach((config) => {
+    const checkbox = document.querySelector(`[data-nemo-label-toggle="${config.id}"]`);
+    if (!checkbox) return;
+    checkbox.checked = Boolean(nemoPanelLayers[config.id] && nemoPanelLayers[config.id].labelsVisible);
+  });
+
+  syncGeoNemoMobileLabelToggle();
 }
 
-function bindUI() {
-  const btnHome = document.getElementById("btnHome");
-  const btnGPS = document.getElementById("btnGPS");
-  const btnClear = document.getElementById("btnClear");
-  const btnPreload = document.getElementById("btnPreload");
-  const btnOut = document.getElementById("btnOut");
-
-  if (btnHome) {
-    btnHome.addEventListener("click", () => {
-      // Siempre volver a HOME_VIEW al pulsar Home, sin importar
-      // si hay viewport externo.
-      map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true });
-      toast("🏠 Vista inicial", 1200);
-      setTimeout(() => syncMapSize(), 150);
-      scheduleStatsUpdate();
+function initGeoNemoDesktopLabelControls() {
+  document.querySelectorAll("[data-nemo-label-toggle]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      applyGeoNemoLabelVisibility(checkbox.dataset.nemoLabelToggle, checkbox.checked);
     });
-  }
-
-  if (btnOut) btnOut.addEventListener("click", () => openOut());
-
-  if (btnGPS) {
-    btnGPS.addEventListener("click", centerMapOnUserPosition);
-  }
-
-  if (btnClear) btnClear.addEventListener("click", clearPoint);
-
-  if (btnPreload) {
-    btnPreload.addEventListener("click", async () => {
-      try {
-        const activeGroups = (GROUPS || []).filter(g => g.enabled !== false);
-        for (const g of activeGroups){
-          for (const fileUrl of (g.files || [])){
-            await ensureFileLoaded(fileUrl);
-          }
-        }
-        toast("⬇️ Archivos precargados", 1400);
-        scheduleStatsUpdate();
-      } catch (err) {
-        console.error(err);
-        toast("⚠️ Error precargando (ver consola)", 2400);
-      }
-    });
-  }
-}
-
-function initMapCursorHint(mapInstance) {
-  const hint = document.getElementById("map-hint-cursor");
-  if (!hint || !mapInstance) return;
-
-  const isTouch = window.matchMedia("(pointer: coarse)").matches;
-  if (isTouch) return;
-
-  const OFFSET_X = 18;
-  const OFFSET_Y = -14;
-
-  function moveHint(x, y) {
-    hint.style.left = `${x + OFFSET_X}px`;
-    hint.style.top = `${y + OFFSET_Y}px`;
-  }
-
-  function showHint() {
-    hint.style.opacity = "1";
-  }
-
-  function hideHint() {
-    hint.style.opacity = "0";
-  }
-
-  const mapEl = mapInstance.getContainer();
-  if (!mapEl) return;
-
-  mapEl.addEventListener("mouseenter", (e) => {
-    moveHint(e.clientX, e.clientY);
-    showHint();
-  });
-
-  mapEl.addEventListener("mousemove", (e) => {
-    moveHint(e.clientX, e.clientY);
-    showHint();
-  });
-
-  mapEl.addEventListener("mouseleave", hideHint);
-  mapEl.addEventListener("mousedown", hideHint);
-}
-
-function initWelcomeModal() {
-  const modal = document.getElementById("welcomeModal");
-  const startBtn = document.getElementById("startBtn");
-  const checkbox = document.getElementById("dontShowAgain");
-  if (!modal || !startBtn || !checkbox) return;
-
-  const hideKey = "hideWelcomeGeoNEMO";
-
-  const closeModal = () => {
-    modal.hidden = true;
-    document.body.classList.remove("modal-open");
-  };
-
-  if (localStorage.getItem(hideKey) === "true") {
-    closeModal();
-    return;
-  }
-
-  modal.hidden = false;
-  document.body.classList.add("modal-open");
-
-  startBtn.addEventListener("click", () => {
-    if (checkbox.checked) {
-      localStorage.setItem(hideKey, "true");
-    }
-    closeModal();
-  });
-
-  modal.addEventListener("click", (e) => {
-    if (e.target === modal) {
-      closeModal();
-    }
-  });
-
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !modal.hidden) {
-      closeModal();
-    }
   });
 }
 
-
-
-/* ===========================
-   Init
-=========================== */
-(async function init() {
-  initialViewport = await resolveInitialViewport();
-
-  if (document.readyState === "loading") {
-    await new Promise((resolve) =>
-      document.addEventListener("DOMContentLoaded", resolve, { once: true })
-    );
-  }
-
-  bindUI();
-  initTerritorialPanelUI();
-  initSearchRadiusUI();
-  bindSearchUI();
-  initWelcomeModal();
-
-  if (DEBUG_STEP_MODE) {
-    debugLog("Debug listo. Pulsa Siguiente.");
-    return;
-  }
-
-  crearMapa(initialViewport);
-  await cargarRegiones();
+// GEOFACTORY SELECTOR REGIÓN
+// CARGA regiones.json
+async function cargarRegionesSelector() {
+  const selector = document.getElementById("region-selector");
+  if (!selector) return;
 
   try {
-    GROUPS = await loadGroupsMaster(GROUPS_URL);
-    searchState.dirty = true;
-    if (!GROUPS.length) toast("⚠️ No hay grupos cargados", 2600);
-    else toast(`✅ Grupos: ${GROUPS.map(g => g.group_name).join(", ")}`, 1600);
-  } catch (e) {
-    console.error(e);
-    toast("⚠️ No pude cargar grupos (ver consola)", 2800);
-    GROUPS = [];
+    const response = await fetch(REGIONES_PATH);
+    if (!response.ok) throw new Error(`No se pudo cargar ${REGIONES_PATH}`);
+
+    const data = await response.json();
+    regionesSelector = Array.isArray(data)
+      ? data.filter((region) => region && region.activo === true)
+      : [];
+
+    if (!regionesSelector.length) {
+      throw new Error(`${REGIONES_PATH} no contiene regiones activas`);
+    }
+
+    selector.innerHTML = "";
+    regionesSelector.forEach((region) => {
+      const option = document.createElement("option");
+      option.value = String(region.codigo_ine || "");
+      option.textContent = region.nombre || "Región sin nombre";
+      selector.appendChild(option);
+    });
+  } catch (error) {
+    regionesSelector = [];
+    console.warn("GEOFACTORY SELECTOR REGIÓN: regiones.json no disponible. Se mantiene el selector actual como respaldo.", error);
+  }
+}
+
+function conectarRegionSelector() {
+  const regionSelector = document.getElementById("region-selector");
+  if (!regionSelector) return;
+
+  regionSelector.addEventListener("change", () => moverViewportPorRegion(regionSelector.value));
+}
+
+// MOVER VIEWPORT POR REGIÓN
+function moverViewportPorRegion(codigoIne) {
+  if (!map || !codigoIne || !regionesSelector.length) return;
+
+  const region = regionesSelector.find((item) => String(item.codigo_ine) === String(codigoIne));
+  if (!region) return;
+
+  if (Array.isArray(region.bbox) && region.bbox.length === 2) {
+    map.fitBounds(region.bbox);
+    return;
   }
 
-  const firstGroup = GROUPS.find(g => g.enabled !== false) || GROUPS[0];
-  const firstFile = firstGroup?.files?.[0];
-  if (firstFile) ensureFileLoaded(firstFile).catch(() => {});
+  if (Array.isArray(region.centro) && region.centro.length === 2) {
+    const zoom = Number.isFinite(Number(region.zoom)) ? Number(region.zoom) : map.getZoom();
+    map.setView(region.centro, zoom);
+  }
+}
 
-  scheduleStatsUpdate();
-  toast("Listo ✅ Mueve/zoom para ver resumen por grupo. Click para abrir MapaOut.", 2200);
+function conectarBaseMapToggle() {
+  const btnOsm = getBaseMapButton("osm");
+  const btnSat = getBaseMapButton("sat");
+
+  if (btnOsm) {
+    btnOsm.addEventListener("click", () => switchBaseMap("osm"));
+  }
+
+  if (btnSat) {
+    btnSat.addEventListener("click", () => switchBaseMap("sat"));
+  }
+}
+
+function getBaseMapButton(type) {
+  const explicitSelectors = type === "osm"
+    ? ["#btn-osm", "#osmBtn", ".btn-osm", '[data-map="osm"]']
+    : ["#btn-sat", "#satBtn", ".btn-sat", '[data-map="sat"]'];
+
+  for (const selector of explicitSelectors) {
+    const button = document.querySelector(selector);
+    if (button) return button;
+  }
+
+  return Array.from(document.querySelectorAll("button")).find(
+    (button) => button.textContent.trim().toLowerCase() === type
+  );
+}
+
+function switchBaseMap(type) {
+  if (!map || !osmLayer || !satLayer) return;
+
+  const nextLayer = type === "sat" ? satLayer : osmLayer;
+  const previousLayer = type === "sat" ? osmLayer : satLayer;
+
+  if (map.hasLayer(previousLayer)) {
+    map.removeLayer(previousLayer);
+  }
+
+  if (!map.hasLayer(nextLayer)) {
+    nextLayer.addTo(map);
+  }
+
+  currentBaseLayer = nextLayer;
+  currentBasemap = type === "sat" ? "sat" : "osm";
+  setBaseMapToggleActive(currentBasemap);
+  syncGeoNemoBasemapClass();
+  updateGeoNemoPanelLayerStyles();
+  rebuildSnaspeRasterLayers();
+  applyGeoNemoLabelVisibility();
+}
+
+function setBaseMapToggleActive(type) {
+  const btnOsm = getBaseMapButton("osm");
+  const btnSat = getBaseMapButton("sat");
+
+  if (btnOsm) {
+    btnOsm.classList.toggle("active", type === "osm");
+    btnOsm.setAttribute("aria-pressed", String(type === "osm"));
+  }
+
+  if (btnSat) {
+    btnSat.classList.toggle("active", type === "sat");
+    btnSat.setAttribute("aria-pressed", String(type === "sat"));
+  }
+}
+
+
+function getMobileLabelEyeIcon(isVisible) {
+  if (isVisible) {
+    return `<svg class="mobile-layer-toggle-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.9"/></svg>`;
+  }
+  return `<svg class="mobile-layer-toggle-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M2.5 12s3.5-6 9.5-6c2.1 0 3.9.72 5.36 1.7M21.5 12s-3.5 6-9.5 6c-2.1 0-3.9-.72-5.36-1.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.8 9.8A3 3 0 0 1 14.2 14.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`;
+}
+
+function syncGeoNemoMobileLabelToggle() {
+  const mobileToggle = document.getElementById("mobile-layer-toggle");
+  if (!mobileToggle) return;
+
+  mobileToggle.classList.toggle("is-active", nemoLabelsVisible);
+  mobileToggle.classList.toggle("is-inactive", !nemoLabelsVisible);
+  mobileToggle.setAttribute("aria-pressed", String(nemoLabelsVisible));
+
+  const action = nemoLabelsVisible ? "Ocultar" : "Mostrar";
+  const label = `${action} etiquetas GeoNEMO`;
+  mobileToggle.setAttribute("aria-label", label);
+  mobileToggle.setAttribute("title", label);
+
+  const icon = mobileToggle.querySelector(".mobile-layer-toggle-icon");
+  if (icon) icon.innerHTML = getMobileLabelEyeIcon(nemoLabelsVisible);
+}
+
+function initGeoNemoMobileLabelToggle() {
+  const mobileToggle = document.getElementById("mobile-layer-toggle");
+  if (!mobileToggle) return;
+
+  mobileToggle.addEventListener("click", () => {
+    const nextVisible = !nemoLabelsVisible;
+    NEMO_PANEL_LAYER_CONFIG.forEach((config) => {
+      if (nemoPanelLayers[config.id]) nemoPanelLayers[config.id].labelsVisible = nextVisible;
+    });
+    applyGeoNemoLabelVisibility(null, nextVisible);
+  });
+  syncGeoNemoMobileLabelToggle();
+}
+
+(function initGeoFactoryIntroModal() {
+  const MODAL_CONFIG_PATH = "./parametros/log-modal.json";
+  const MODAL_CONFIG_FALLBACK_PATH = "./assets/log-modal.json";
+
+  async function loadModalConfig() {
+    const response = await fetch(MODAL_CONFIG_PATH);
+    if (response.ok) return response.json();
+
+    const fallbackResponse = await fetch(MODAL_CONFIG_FALLBACK_PATH);
+    if (!fallbackResponse.ok) throw new Error(`No se pudo cargar ${MODAL_CONFIG_PATH}`);
+    return fallbackResponse.json();
+  }
+
+  function ensureModalStyles() {
+    if (document.getElementById("geofactory-intro-modal-styles")) return;
+
+    const style = document.createElement("style");
+    style.id = "geofactory-intro-modal-styles";
+    style.textContent = `
+      .geofactory-intro-overlay{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(3,7,18,.68)}
+      .geofactory-intro-modal{width:min(92vw,560px);max-height:90vh;overflow-y:auto;border-radius:18px;background:#fff;color:#071225;padding:24px;box-shadow:0 28px 80px rgba(0,0,0,.38);text-align:center;font-family:inherit}
+      .geofactory-intro-image{display:block;width:100%;max-width:480px;height:auto;margin:0 auto 20px;border-radius:12px}
+      .geofactory-intro-actions{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap}
+      .geofactory-intro-button{border:0;border-radius:12px;padding:14px 26px;background:#071225;color:#fff;font-weight:800;font-size:.95rem;cursor:pointer;box-shadow:0 12px 28px rgba(7,18,37,.22)}
+      .geofactory-intro-button:hover{transform:translateY(-1px)}
+      .geofactory-intro-button:focus-visible,.geofactory-intro-check input:focus-visible{outline:3px solid rgba(37,99,235,.35);outline-offset:3px}
+      .geofactory-intro-check{display:inline-flex;align-items:center;gap:8px;color:#4b5563;font-size:.95rem;cursor:pointer}
+      .geofactory-intro-check input{width:16px;height:16px}
+      @media(max-width:640px){.geofactory-intro-overlay{padding:12px}.geofactory-intro-modal{width:min(94vw,420px);padding:20px;border-radius:16px}.geofactory-intro-actions{flex-direction:column;gap:12px}.geofactory-intro-button{width:100%}.geofactory-intro-image{max-width:100%;margin-bottom:18px}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function localStorageHas(storageKey) {
+    return Boolean(storageKey && window.localStorage.getItem(storageKey));
+  }
+
+  function buildModal(modalIntro) {
+    const imageConfig = modalIntro.imagen || {};
+    const imageSrc = `${imageConfig.ruta || ""}${imageConfig.archivo || ""}`;
+    if (!imageSrc) return null;
+
+    const existingHardcodedOverlay = document.getElementById("geoipt-intro-overlay");
+    if (existingHardcodedOverlay) existingHardcodedOverlay.remove();
+
+    const overlay = document.createElement("div");
+    overlay.className = "geofactory-intro-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "geofactory-intro-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "Modal introductorio");
+
+    const image = document.createElement("img");
+    image.className = "geofactory-intro-image";
+    image.src = imageSrc;
+    image.alt = imageConfig.alt || "Instrucciones de uso";
+
+    const actions = document.createElement("div");
+    actions.className = "geofactory-intro-actions";
+
+    const button = document.createElement("button");
+    button.className = "geofactory-intro-button";
+    button.type = "button";
+    button.textContent = modalIntro.botonTexto || "Comenzar";
+
+    const label = document.createElement("label");
+    label.className = "geofactory-intro-check";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+
+    label.append(checkbox, document.createTextNode("No volver a mostrar"));
+    actions.append(button, label);
+    modal.append(image, actions);
+    overlay.appendChild(modal);
+
+    button.addEventListener("click", () => {
+      if (checkbox.checked && modalIntro.storageKey) {
+        window.localStorage.setItem(modalIntro.storageKey, "true");
+      }
+      overlay.remove();
+    });
+
+    return overlay;
+  }
+
+  document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      if (getInitialViewportFromUrl()) return;
+      if (isCrossAccessNavigationFromUrl()) {
+        const existingHardcodedOverlay = document.getElementById("geoipt-intro-overlay");
+        if (existingHardcodedOverlay) existingHardcodedOverlay.remove();
+        return;
+      }
+
+      const config = await loadModalConfig();
+      const modalIntro = config && config.modalIntro;
+      if (!modalIntro || modalIntro.activo !== true || localStorageHas(modalIntro.storageKey)) return;
+
+      ensureModalStyles();
+      const modal = buildModal(modalIntro);
+      if (modal) document.body.appendChild(modal);
+    } catch (error) {
+      console.warn("GeoFactory modal inicial no disponible.", error);
+    }
+  });
 })();

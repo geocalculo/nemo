@@ -1,0 +1,172 @@
+{
+  "config_version": "1.0",
+  "description": "Configuración Smart Labels GeoX. Define máximos de etiquetas por cada 100 km2, usando bbox útil de features visibles y no el viewport completo.",
+  "enabled": true,
+  "density_unit_km2": 100,
+  "area_calculation": {
+    "mode": "useful_bbox",
+    "description": "Calcular densidad sobre el rectángulo útil de features etiquetables visibles dentro del viewport.",
+    "use_viewport_full_area": false,
+    "bbox_padding_px": {
+      "desktop": 24,
+      "mobile": 12
+    }
+  },
+  "global_defaults": {
+    "desktop": {
+      "max_labels_per_100km2": 12,
+      "min_labels": 1,
+      "hard_max_labels": 80
+    },
+    "mobile": {
+      "max_labels_per_100km2": 5,
+      "min_labels": 1,
+      "hard_max_labels": 25
+    }
+  },
+  "zoom_limits": [
+    {
+      "min_zoom": 0,
+      "max_zoom": 7,
+      "desktop_hard_max_labels": 8,
+      "mobile_hard_max_labels": 4
+    },
+    {
+      "min_zoom": 8,
+      "max_zoom": 10,
+      "desktop_hard_max_labels": 25,
+      "mobile_hard_max_labels": 10
+    },
+    {
+      "min_zoom": 11,
+      "max_zoom": 13,
+      "desktop_hard_max_labels": 60,
+      "mobile_hard_max_labels": 20
+    },
+    {
+      "min_zoom": 14,
+      "max_zoom": 22,
+      "desktop_hard_max_labels": 100,
+      "mobile_hard_max_labels": 35
+    }
+  ],
+  "collision": {
+    "enabled": true,
+    "min_distance_px": {
+      "desktop": 18,
+      "mobile": 24
+    },
+    "label_padding_px": {
+      "desktop": 6,
+      "mobile": 8
+    }
+  },
+  "deduplication": {
+    "enabled": true,
+    "by_text": true,
+    "by_visual_cell": true,
+    "visual_cell_size_px": {
+      "desktop": 120,
+      "mobile": 160
+    },
+    "max_same_text_per_cell": {
+      "desktop": 1,
+      "mobile": 1
+    }
+  },
+  "priority": {
+    "mode": "center_weighted",
+    "prefer_features_near_view_center": true,
+    "prefer_features_with_valid_label": true,
+    "prefer_larger_polygons": true
+  },
+  "layers": [
+    {
+      "layer_id": "geoipt_prc",
+      "enabled": true,
+      "label_field": "nombre",
+      "desktop": {
+        "max_labels_per_100km2": 10,
+        "hard_max_labels": 60
+      },
+      "mobile": {
+        "max_labels_per_100km2": 4,
+        "hard_max_labels": 20
+      }
+    },
+    {
+      "layer_id": "geoeva_proyectos",
+      "enabled": true,
+      "label_field": "sector",
+      "desktop": {
+        "max_labels_per_100km2": 8,
+        "hard_max_labels": 70
+      },
+      "mobile": {
+        "max_labels_per_100km2": 3,
+        "hard_max_labels": 20
+      }
+    },
+    {
+      "layer_id": "geonoxa_relaves",
+      "enabled": true,
+      "label_field": "recurso",
+      "desktop": {
+        "max_labels_per_100km2": 10,
+        "hard_max_labels": 60
+      },
+      "mobile": {
+        "max_labels_per_100km2": 4,
+        "hard_max_labels": 20
+      }
+    },
+    {
+      "layer_id": "geonoxa_zonas",
+      "enabled": true,
+      "label_field": "contaminante",
+      "desktop": {
+        "max_labels_per_100km2": 6,
+        "hard_max_labels": 40
+      },
+      "mobile": {
+        "max_labels_per_100km2": 3,
+        "hard_max_labels": 15
+      }
+    },
+    {
+      "layer_id": "geonemo_snaspe",
+      "enabled": true,
+      "label_field": "NOMBRE_TOT",
+      "fallback_label_fields": [
+        "NOMBRE_UNI",
+        "nombre",
+        "Nombre"
+      ],
+      "desktop": {
+        "max_labels_per_100km2": 5,
+        "hard_max_labels": 40
+      },
+      "mobile": {
+        "max_labels_per_100km2": 2,
+        "hard_max_labels": 12
+      }
+    },
+    {
+      "layer_id": "geonemo_ramsar",
+      "enabled": true,
+      "label_field": "Nombre",
+      "fallback_label_fields": [
+        "nombre",
+        "NOMBRE"
+      ],
+      "desktop": {
+        "max_labels_per_100km2": 5,
+        "hard_max_labels": 40
+      },
+      "mobile": {
+        "max_labels_per_100km2": 2,
+        "hard_max_labels": 12
+      }
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "sitio": "geonemo",
+  "grupo": "ramsar",
+
+
+  "regla_busqueda": {
+    "universo": "features_presentes_en_viewport_original",
+    "flujo": [
+      "intersects",
+      "nearest"
+    ],
+    "comparacion": "global_entre_todas_las_capas_activas",
+    "distancia_nearest": "distancia_geodesica_minima_al_perimetro_real",
+    "usar_centroide": false,
+    "prioridad_por_orden_de_archivo": false,
+    "detener_en_primer_resultado": false
+  },
+  "capas": [
+    {
+      "id": "ramsar",
+      "archivo": "nemo_ramsar_query.geojson",
+      "activo": true,
+      "territorio": "general",
+      "incluir_en_intersects": true,
+      "incluir_en_nearest": true
+    }
+  ]
+}

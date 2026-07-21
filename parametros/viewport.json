@@ -1,0 +1,32 @@
+{
+  "site": "geonemo",
+  "defaultLocationLabel": "Vallenar",
+  "defaultViewport": {
+    "center": {
+      "lat": -28.5758,
+      "lon": -70.7581
+    },
+    "scaleDenominator": 50000,
+    "fallbackZoom": 13.5,
+    "basemap": "osm"
+  },
+  "locationViewport": {
+    "scaleDenominator": 50000,
+    "fallbackZoom": 13.5,
+    "basemap": "osm"
+  },
+  "zoomLimits": {
+    "min": 3,
+    "max": 19,
+    "snap": 0.25
+  },
+  "initialViewport": {
+    "center": {
+      "lat": -28.5758,
+      "lon": -70.7581
+    },
+    "zoom": 13.5,
+    "referenceScale": "1:50.000",
+    "basemap": "osm"
+  }
+}
